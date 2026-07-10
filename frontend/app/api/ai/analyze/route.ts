@@ -1,6 +1,58 @@
 import { NextRequest } from "next/server";
-import { apiError, apiSuccess } from "@/lib/api-response";
-import { generateComparisonSummary } from "@/lib/openai";
+import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
+import { isServiceError } from "@/lib/errors";
+import { isOpenAIConfigured } from "@/lib/env";
+import { generateComparisonSummary, testOpenAIConnection } from "@/lib/openai";
+
+function logAnalyzeError(action: string, error: unknown, context?: Record<string, unknown>) {
+  const details = isServiceError(error)
+    ? { code: error.code, status: error.status, message: error.message }
+    : { message: error instanceof Error ? error.message : String(error) };
+
+  console.error(`[api/ai/analyze] ${action} failed`, { ...context, ...details, error });
+}
+
+function respondWithServiceError(error: unknown) {
+  if (isServiceError(error)) {
+    return apiError(error.message, error.status, error.code);
+  }
+
+  return handleApiError(error);
+}
+
+/**
+ * GET /api/ai/analyze
+ * - Default: config status and usage hints
+ * - ?test=true: live OpenAI connectivity check
+ */
+export async function GET(request: NextRequest) {
+  const runTest = request.nextUrl.searchParams.get("test") === "true";
+
+  if (!runTest) {
+    return apiSuccess({
+      endpoint: "/api/ai/analyze",
+      configured: isOpenAIConfigured(),
+      testUrl: "/api/ai/analyze?test=true",
+      postExample: {
+        materials: [
+          {
+            name: "Alucobond Plus A2",
+            category: "ACP",
+            specs: { fireRating: "A2-s1,d0", thickness: "4mm" },
+          },
+        ],
+      },
+    });
+  }
+
+  try {
+    const result = await testOpenAIConnection();
+    return apiSuccess(result);
+  } catch (error) {
+    logAnalyzeError("GET test", error);
+    return respondWithServiceError(error);
+  }
+}
 
 /** POST /api/ai/analyze — AI-powered material analysis via OpenAI. */
 export async function POST(request: NextRequest) {
@@ -12,19 +64,20 @@ export async function POST(request: NextRequest) {
       return apiError("Materials array is required", 400, "INVALID_REQUEST");
     }
 
-    const summary = await generateComparisonSummary(materials);
-
-    if (!summary) {
-      return apiError(
-        "AI analysis unavailable. Configure OPENAI_API_KEY.",
-        503,
-        "AI_UNAVAILABLE",
-      );
+    for (const [index, material] of materials.entries()) {
+      if (!material?.name || !material?.category) {
+        return apiError(
+          `Material at index ${index} must include name and category`,
+          400,
+          "INVALID_REQUEST",
+        );
+      }
     }
 
+    const summary = await generateComparisonSummary(materials);
     return apiSuccess({ summary });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "AI analysis failed";
-    return apiError(message, 500, "AI_ERROR");
+  } catch (error) {
+    logAnalyzeError("POST analyze", error, { configured: isOpenAIConfigured() });
+    return respondWithServiceError(error);
   }
 }

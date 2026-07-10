@@ -9,14 +9,20 @@ const envSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
 });
 
+/** Treat blank env values as unset so optional Zod fields do not fail the whole parse. */
+function emptyToUndefined(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function parseEnv() {
   const parsed = envSchema.safeParse({
-    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    APIFY_API_TOKEN: process.env.APIFY_API_TOKEN,
-    N8N_WEBHOOK_URL: process.env.N8N_WEBHOOK_URL,
-    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+    NEXT_PUBLIC_SUPABASE_URL: emptyToUndefined(process.env.NEXT_PUBLIC_SUPABASE_URL),
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: emptyToUndefined(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+    OPENAI_API_KEY: emptyToUndefined(process.env.OPENAI_API_KEY),
+    APIFY_API_TOKEN: emptyToUndefined(process.env.APIFY_API_TOKEN),
+    N8N_WEBHOOK_URL: emptyToUndefined(process.env.N8N_WEBHOOK_URL),
+    NEXT_PUBLIC_APP_URL: emptyToUndefined(process.env.NEXT_PUBLIC_APP_URL),
   });
 
   if (!parsed.success) {
