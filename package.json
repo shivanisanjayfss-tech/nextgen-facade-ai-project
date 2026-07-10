@@ -1,0 +1,15 @@
+{
+  "name": "nextgen-facade-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered facade material intelligence platform",
+  "scripts": {
+    "dev": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "start": "npm run start --prefix frontend",
+    "lint": "npm run lint --prefix frontend"
+  },
+  "workspaces": [
+    "frontend"
+  ]
+}
