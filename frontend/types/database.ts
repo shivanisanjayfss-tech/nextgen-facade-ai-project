@@ -12,6 +12,7 @@ export interface MaterialRow {
   specs: Record<string, unknown>;
   image_url: string | null;
   datasheet_url: string | null;
+  source_url: string | null;
   tags: string[];
   created_at: string;
   updated_at: string;

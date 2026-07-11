@@ -6,6 +6,7 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.string().min(1).optional(),
   GEMINI_MODEL: z.string().min(1).optional(),
   APIFY_API_TOKEN: z.string().min(1).optional(),
+  APIFY_MATERIALS_ACTOR_ID: z.string().min(1).optional(),
   N8N_WEBHOOK_URL: z.string().url().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
 });
@@ -23,6 +24,7 @@ function parseEnv() {
     GEMINI_API_KEY: emptyToUndefined(process.env.GEMINI_API_KEY),
     GEMINI_MODEL: emptyToUndefined(process.env.GEMINI_MODEL),
     APIFY_API_TOKEN: emptyToUndefined(process.env.APIFY_API_TOKEN),
+    APIFY_MATERIALS_ACTOR_ID: emptyToUndefined(process.env.APIFY_MATERIALS_ACTOR_ID),
     N8N_WEBHOOK_URL: emptyToUndefined(process.env.N8N_WEBHOOK_URL),
     NEXT_PUBLIC_APP_URL: emptyToUndefined(process.env.NEXT_PUBLIC_APP_URL),
   });

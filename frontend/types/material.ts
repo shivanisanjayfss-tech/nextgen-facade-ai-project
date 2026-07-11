@@ -13,6 +13,7 @@ export interface MaterialSpecs {
   thermalConductivity?: string;
   weight?: string;
   thickness?: string;
+  dimensions?: string;
   windLoad?: string;
   uValue?: string;
   colorOptions?: string[];
@@ -29,6 +30,7 @@ export interface Material {
   specs: MaterialSpecs;
   imageUrl?: string;
   datasheetUrl?: string;
+  sourceUrl?: string;
   tags: string[];
   createdAt: string;
   updatedAt: string;

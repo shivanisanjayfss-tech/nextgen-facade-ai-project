@@ -4,5 +4,10 @@ export type { CompareRequest, ComparisonCriteria, ComparisonResult } from "./com
 export type { KnowledgeArticle, KnowledgeCategory } from "./knowledge";
 export type { Datasheet } from "./datasheet";
 export type { ApiError, ApiResponse, ApiSuccess } from "./api";
+export type {
+  ApifyRunStatus,
+  ImportedMaterialData,
+  MaterialImportResult,
+} from "./import";
 export type { MaterialRow, DatasheetRow, KnowledgeArticleRow } from "./database";
 export { DB_TABLES } from "./database";

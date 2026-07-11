@@ -13,6 +13,7 @@ export function mapMaterialRow(row: MaterialRow): Material {
     specs: row.specs as MaterialSpecs,
     imageUrl: row.image_url ?? undefined,
     datasheetUrl: row.datasheet_url ?? undefined,
+    sourceUrl: row.source_url ?? undefined,
     tags: row.tags ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
