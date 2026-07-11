@@ -1,4 +1,4 @@
-import { generateComparisonSummary } from "@/lib/openai";
+import { generateComparisonSummary } from "@/lib/gemini";
 import { getMaterialsByIds } from "@/services/material.service";
 import type { ComparisonCriteria, ComparisonResult } from "@/types";
 

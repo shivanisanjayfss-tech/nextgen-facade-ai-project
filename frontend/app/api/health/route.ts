@@ -1,8 +1,8 @@
 import { apiSuccess, withApiHandler } from "@/lib/api-response";
 import {
   isApifyConfigured,
+  isGeminiConfigured,
   isN8nConfigured,
-  isOpenAIConfigured,
   isSupabaseConfigured,
 } from "@/lib/env";
 
@@ -18,7 +18,7 @@ export const GET = withApiHandler(async () => {
     version: "0.1.0",
     integrations: {
       supabase: isSupabaseConfigured(),
-      openai: isOpenAIConfigured(),
+      gemini: isGeminiConfigured(),
       apify: isApifyConfigured(),
       n8n: isN8nConfigured(),
     },

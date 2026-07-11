@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { isServiceError } from "@/lib/errors";
-import { isOpenAIConfigured } from "@/lib/env";
-import { generateComparisonSummary, testOpenAIConnection } from "@/lib/openai";
+import { isGeminiConfigured } from "@/lib/env";
+import { generateComparisonSummary, testGeminiConnection } from "@/lib/gemini";
 
 function logAnalyzeError(action: string, error: unknown, context?: Record<string, unknown>) {
   const details = isServiceError(error)
@@ -23,7 +23,7 @@ function respondWithServiceError(error: unknown) {
 /**
  * GET /api/ai/analyze
  * - Default: config status and usage hints
- * - ?test=true: live OpenAI connectivity check
+ * - ?test=true: live Gemini connectivity check
  */
 export async function GET(request: NextRequest) {
   const runTest = request.nextUrl.searchParams.get("test") === "true";
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   if (!runTest) {
     return apiSuccess({
       endpoint: "/api/ai/analyze",
-      configured: isOpenAIConfigured(),
+      configured: isGeminiConfigured(),
       testUrl: "/api/ai/analyze?test=true",
       postExample: {
         materials: [
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await testOpenAIConnection();
+    const result = await testGeminiConnection();
     return apiSuccess(result);
   } catch (error) {
     logAnalyzeError("GET test", error);
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** POST /api/ai/analyze — AI-powered material analysis via OpenAI. */
+/** POST /api/ai/analyze — AI-powered material analysis via Gemini. */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
     const summary = await generateComparisonSummary(materials);
     return apiSuccess({ summary });
   } catch (error) {
-    logAnalyzeError("POST analyze", error, { configured: isOpenAIConfigured() });
+    logAnalyzeError("POST analyze", error, { configured: isGeminiConfigured() });
     return respondWithServiceError(error);
   }
 }
