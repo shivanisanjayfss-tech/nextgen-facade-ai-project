@@ -27,6 +27,8 @@ export async function importAlucobondProducts(
     category: "ACP",
     productPagePattern: /\/products\/by-brand\/[^/]+/i,
     includeUrlGlobs: [`${ALUCOBOND_BASE}/en/products/by-brand/**`],
+    skipHomepageDiscovery: true,
+    maxCrawlDepth: 4,
     maxPages: options.maxPages,
     limit: options.limit,
     timeoutMs: options.timeoutMs,

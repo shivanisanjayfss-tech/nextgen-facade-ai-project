@@ -35,6 +35,19 @@ export interface CrawledProduct {
   sourceUrl: string;
 }
 
+/** Page skipped during crawl extraction — navigation, informational, or failed quality checks. */
+export interface IgnoredPage {
+  url: string;
+  reason: string;
+}
+
+/** High-level import counts returned after crawl extraction and persistence. */
+export interface ImportSummary {
+  imported: number;
+  skipped: number;
+  ignored: number;
+}
+
 /** Response shape for a crawl + persist import run. */
 export interface CrawlImportResult {
   source: string;
@@ -49,6 +62,18 @@ export interface CrawlImportResult {
   crawled_pages: number;
   product_count: number;
   products: CrawledProduct[];
+  /** Product-page URLs identified from the crawl before field extraction. */
+  discovered_product_urls: string[];
+  /** Entry URLs discovered from a homepage link scan (empty when not applicable). */
+  discovered_entry_urls: string[];
+  /** Start URLs sent to the crawler (catalogue entry points). */
+  crawl_start_urls: string[];
+  /** All page URLs returned by the crawler before product extraction. */
+  crawl_urls: string[];
+  /** Crawled pages excluded from import (navigation, informational, or incomplete). */
+  ignored_pages: IgnoredPage[];
+  /** Convenience counts — imported/skipped from DB, ignored from extraction filters. */
+  import_summary?: ImportSummary;
   notes: string[];
   persist?: MaterialPersistResult;
 }

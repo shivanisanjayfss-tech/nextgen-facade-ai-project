@@ -6,7 +6,23 @@ import {
   importManufacturerProducts,
   WEBSITE_CONTENT_CRAWLER_ACTOR,
 } from "@/services/manufacturer-import.service";
+import {
+  buildGuardianGlassImportOptions,
+  isGuardianGlassManufacturer,
+} from "@/services/guardian-glass-import.service";
 import { persistCrawledProducts } from "@/services/material-import.service";
+import type { CrawlImportResult, ImportSummary } from "@/types/import";
+
+function buildImportSummary(
+  result: CrawlImportResult,
+  persist: NonNullable<CrawlImportResult["persist"]>,
+): ImportSummary {
+  return {
+    imported: persist.imported,
+    skipped: persist.skipped,
+    ignored: result.ignored_pages.length,
+  };
+}
 
 function clampNumber(
   value: string | null,
@@ -28,7 +44,7 @@ function clampNumber(
  *
  * Query params:
  *   ?manufacturer=Alucobond&url=https://www.alucobond.com/en/products/&category=ACP
- *   &maxPages=25&limit=50&timeout=60000
+ *   &maxPages=50&limit=50&timeout=60000
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -49,6 +65,12 @@ export async function GET(request: NextRequest) {
       crawled_pages: 0,
       product_count: 0,
       products: [],
+      discovered_product_urls: [],
+      discovered_entry_urls: [],
+      crawl_start_urls: [],
+      crawl_urls: [],
+      ignored_pages: [],
+      import_summary: { imported: 0, skipped: 0, ignored: 0 },
       notes: [
         "APIFY_API_TOKEN is not configured. Add it to .env.local and restart the dev server to run the crawl.",
       ],
@@ -74,19 +96,29 @@ export async function GET(request: NextRequest) {
     return apiError("Query param 'url' must be a valid URL.", 400, "INVALID_REQUEST");
   }
 
-  const maxPages = clampNumber(searchParams.get("maxPages"), 25, 1, 200);
+  const maxPages = clampNumber(searchParams.get("maxPages"), 50, 1, 200);
   const limit = clampNumber(searchParams.get("limit"), 50, 1, 500);
   const timeoutMs = clampNumber(searchParams.get("timeout"), 60_000, 10_000, 300_000);
 
   try {
-    const result = await importManufacturerProducts({
-      manufacturer,
-      websiteUrl,
-      category,
-      maxPages,
-      limit,
-      timeoutMs,
-    });
+    const importOptions = isGuardianGlassManufacturer(manufacturer)
+      ? buildGuardianGlassImportOptions({
+          websiteUrl,
+          category,
+          maxPages,
+          limit,
+          timeoutMs,
+        })
+      : {
+          manufacturer,
+          websiteUrl,
+          category,
+          maxPages,
+          limit,
+          timeoutMs,
+        };
+
+    const result = await importManufacturerProducts(importOptions);
 
     let persist;
     try {
@@ -108,7 +140,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    return apiSuccess({ ...result, notes, persist });
+    return apiSuccess({
+      ...result,
+      notes,
+      persist,
+      import_summary: buildImportSummary(result, persist),
+    });
   } catch (error) {
     if (isServiceError(error)) {
       return apiError(error.message, error.status, error.code);

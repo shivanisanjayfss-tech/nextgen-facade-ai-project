@@ -7,6 +7,18 @@ import {
   WEBSITE_CONTENT_CRAWLER_ACTOR,
 } from "@/services/alucobond-import.service";
 import { persistCrawledProducts } from "@/services/material-import.service";
+import type { CrawlImportResult, ImportSummary } from "@/types/import";
+
+function buildImportSummary(
+  result: CrawlImportResult,
+  persist: NonNullable<CrawlImportResult["persist"]>,
+): ImportSummary {
+  return {
+    imported: persist.imported,
+    skipped: persist.skipped,
+    ignored: result.ignored_pages.length,
+  };
+}
 
 function clampNumber(
   value: string | null,
@@ -41,6 +53,12 @@ export async function GET(request: NextRequest) {
       crawled_pages: 0,
       product_count: 0,
       products: [],
+      discovered_product_urls: [],
+      discovered_entry_urls: [],
+      crawl_start_urls: [],
+      crawl_urls: [],
+      ignored_pages: [],
+      import_summary: { imported: 0, skipped: 0, ignored: 0 },
       notes: [
         "APIFY_API_TOKEN is not configured. Add it to .env.local and restart the dev server to run the crawl.",
       ],
@@ -75,7 +93,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    return apiSuccess({ ...result, notes, persist });
+    return apiSuccess({
+      ...result,
+      notes,
+      persist,
+      import_summary: buildImportSummary(result, persist),
+    });
   } catch (error) {
     if (isServiceError(error)) {
       return apiError(error.message, error.status, error.code);

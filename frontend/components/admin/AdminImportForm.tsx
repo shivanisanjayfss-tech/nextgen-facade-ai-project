@@ -37,6 +37,11 @@ interface ImportStats {
   crawledPages: number;
   status: string;
   notes: string[];
+  discoveredProductUrls: string[];
+  discoveredEntryUrls: string[];
+  crawlStartUrls: string[];
+  crawlUrls: string[];
+  ignoredPages: Array<{ url: string; reason: string }>;
   errors: Array<{ sourceUrl: string; productName: string; message: string }>;
 }
 
@@ -66,8 +71,8 @@ export function AdminImportForm() {
         manufacturer,
         url: websiteUrl,
         category,
-        maxPages: 10,
-        timeout: 90_000,
+        maxPages: 50,
+        timeout: 120_000,
       });
 
       const response = await fetch(`/api/apify/import${query}`);
@@ -81,13 +86,18 @@ export function AdminImportForm() {
 
       const { data } = json;
       setStats({
-        imported: data.persist?.imported ?? 0,
+        imported: data.import_summary?.imported ?? data.persist?.imported ?? 0,
         updated: data.persist?.updated ?? 0,
-        skipped: data.persist?.skipped ?? 0,
+        skipped: data.import_summary?.skipped ?? data.persist?.skipped ?? 0,
         productCount: data.product_count,
         crawledPages: data.crawled_pages,
         status: data.status,
         notes: data.notes,
+        discoveredProductUrls: data.discovered_product_urls ?? [],
+        discoveredEntryUrls: data.discovered_entry_urls ?? [],
+        crawlStartUrls: data.crawl_start_urls ?? [],
+        crawlUrls: data.crawl_urls ?? [],
+        ignoredPages: data.ignored_pages ?? [],
         errors: data.persist?.errors ?? [],
       });
     } catch (err) {
@@ -131,7 +141,7 @@ export function AdminImportForm() {
           <Input
             label="Website URL"
             type="url"
-            placeholder="https://www.alucobond.com/en/products/"
+            placeholder="https://www.alucobond.com/en/products/ or https://www.guardianglass.com"
             value={form.websiteUrl}
             onChange={(event) =>
               setForm((current) => ({ ...current, websiteUrl: event.target.value }))
@@ -202,12 +212,107 @@ export function AdminImportForm() {
               </CardDescription>
             </CardHeader>
 
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard label="Imported" value={stats.imported} tone="green" />
               <StatCard label="Updated" value={stats.updated} tone="blue" />
               <StatCard label="Skipped" value={stats.skipped} tone="neutral" />
+              <StatCard label="Ignored" value={stats.ignoredPages.length} tone="amber" />
             </div>
           </Card>
+
+          {stats.crawlStartUrls.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Crawl start URLs</CardTitle>
+                <CardDescription>
+                  Catalogue entry points sent to the crawler before extraction.
+                </CardDescription>
+              </CardHeader>
+              <ul className="space-y-2 text-sm text-white/60">
+                {stats.crawlStartUrls.map((url) => (
+                  <li key={url} className="break-all">
+                    • {url}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {stats.crawlUrls.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Crawled URLs</CardTitle>
+                <CardDescription>
+                  {stats.crawlUrls.length} page(s) crawled before product extraction.
+                </CardDescription>
+              </CardHeader>
+              <ul className="max-h-64 space-y-2 overflow-y-auto text-sm text-white/60">
+                {stats.crawlUrls.map((url) => (
+                  <li key={url} className="break-all">
+                    • {url}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {stats.discoveredEntryUrls.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Discovered entry URLs</CardTitle>
+                <CardDescription>
+                  Product-section links found on the homepage before crawling.
+                </CardDescription>
+              </CardHeader>
+              <ul className="space-y-2 text-sm text-white/60">
+                {stats.discoveredEntryUrls.map((url) => (
+                  <li key={url} className="break-all">
+                    • {url}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {stats.discoveredProductUrls.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Discovered product URLs</CardTitle>
+                <CardDescription>
+                  {stats.discoveredProductUrls.length} product page(s) identified before extraction.
+                </CardDescription>
+              </CardHeader>
+              <ul className="max-h-64 space-y-2 overflow-y-auto text-sm text-white/60">
+                {stats.discoveredProductUrls.map((url) => (
+                  <li key={url} className="break-all">
+                    • {url}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {stats.ignoredPages.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Ignored pages</CardTitle>
+                <CardDescription>
+                  {stats.ignoredPages.length} page(s) excluded from import.
+                </CardDescription>
+              </CardHeader>
+              <ul className="max-h-64 space-y-3 overflow-y-auto text-sm">
+                {stats.ignoredPages.map((entry) => (
+                  <li
+                    key={`${entry.url}-${entry.reason}`}
+                    className="rounded-xl border border-amber-400/10 bg-amber-400/5 px-4 py-3 text-white/70"
+                  >
+                    <p className="break-all">{entry.url}</p>
+                    <p className="mt-1 text-amber-200/70">{entry.reason}</p>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
           {stats.notes.length > 0 && (
             <Card>
@@ -256,12 +361,13 @@ function StatCard({
 }: {
   label: string;
   value: number;
-  tone: "green" | "blue" | "neutral";
+  tone: "green" | "blue" | "neutral" | "amber";
 }) {
   const toneStyles = {
     green: "border-emerald-400/20 bg-emerald-400/5 text-emerald-300",
     blue: "border-sky-400/20 bg-sky-400/5 text-sky-300",
     neutral: "border-white/10 bg-white/[0.03] text-white/70",
+    amber: "border-amber-400/20 bg-amber-400/5 text-amber-300",
   };
 
   return (
