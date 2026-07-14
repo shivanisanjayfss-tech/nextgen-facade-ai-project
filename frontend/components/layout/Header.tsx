@@ -7,6 +7,7 @@ const NAV_LINKS = [
   { href: "/compare", label: "Compare" },
   { href: "/datasheets", label: "Datasheets" },
   { href: "/knowledge", label: "Knowledge" },
+  { href: "/admin/import", label: "Import" },
 ];
 
 /** Top navigation bar with logo, links, and login button. */

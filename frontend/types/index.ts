@@ -6,8 +6,11 @@ export type { Datasheet } from "./datasheet";
 export type { ApiError, ApiResponse, ApiSuccess } from "./api";
 export type {
   ApifyRunStatus,
+  CrawlImportResult,
+  CrawledProduct,
   ImportedMaterialData,
   MaterialImportResult,
+  MaterialPersistResult,
 } from "./import";
 export type { MaterialRow, DatasheetRow, KnowledgeArticleRow } from "./database";
 export { DB_TABLES } from "./database";
