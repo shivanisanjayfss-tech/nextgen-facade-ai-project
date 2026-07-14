@@ -1,17 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import type { MaterialCategory } from "@/types";
-
-const CATEGORIES: MaterialCategory[] = [
-  "ACP",
-  "Glass",
-  "Stone",
-  "HPL",
-  "Louvers",
-  "Metal",
-  "Composite",
-];
+import { MATERIAL_CATEGORIES } from "@/lib/material-categories";
 
 interface SearchFiltersProps {
   activeCategory?: string;
@@ -34,7 +24,7 @@ export function SearchFilters({ activeCategory, onCategoryChange }: SearchFilter
       >
         All
       </button>
-      {CATEGORIES.map((cat) => (
+      {MATERIAL_CATEGORIES.filter((cat) => cat !== "Other").map((cat) => (
         <button
           key={cat}
           type="button"

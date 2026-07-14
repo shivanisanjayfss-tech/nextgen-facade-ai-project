@@ -14,3 +14,15 @@ export type {
 } from "./import";
 export type { MaterialRow, DatasheetRow, KnowledgeArticleRow } from "./database";
 export { DB_TABLES } from "./database";
+export type {
+  ManufacturerCategoryGroup,
+  ManufacturerDirectoryEntry,
+  ManufacturerDirectoryResult,
+  ManufacturerImportStatus,
+} from "./manufacturer-directory";
+export type {
+  ImportHistoryRow,
+  ImportHistoryStatus,
+  ManufacturerImportReport,
+  RunAllImportsResult,
+} from "./import-history";

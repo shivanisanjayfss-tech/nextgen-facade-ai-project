@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, withApiHandler } from "@/lib/api-response";
+import { ServiceError } from "@/lib/errors";
+import { mapMaterialToDetailResponse } from "@/lib/material-api";
 import { requireMaterialById } from "@/services/material.service";
 
 interface RouteContext {
@@ -17,5 +19,5 @@ export const GET = withApiHandler(async (
 ) => {
   const { id } = await context!.params;
   const material = await requireMaterialById(id);
-  return apiSuccess(material);
+  return apiSuccess(mapMaterialToDetailResponse(material));
 });

@@ -4,7 +4,7 @@ const features = [
   {
     title: "Material Search",
     description:
-      "Instantly find ACP, glass, stone, HPL, louvers, and other facade materials across global catalogs.",
+      "Instantly find ACP Sheet, glass, stone, HPL, louvers, and other facade materials across global catalogs.",
     href: "/search",
     icon: (
       <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">

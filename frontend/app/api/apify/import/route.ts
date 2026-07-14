@@ -6,10 +6,8 @@ import {
   importManufacturerProducts,
   WEBSITE_CONTENT_CRAWLER_ACTOR,
 } from "@/services/manufacturer-import.service";
-import {
-  buildGuardianGlassImportOptions,
-  isGuardianGlassManufacturer,
-} from "@/services/guardian-glass-import.service";
+import { resolveImportStrategy } from "@/services/import-strategies";
+import { resolveImportLimits } from "@/services/import-limits";
 import { persistCrawledProducts } from "@/services/material-import.service";
 import type { CrawlImportResult, ImportSummary } from "@/types/import";
 
@@ -19,8 +17,10 @@ function buildImportSummary(
 ): ImportSummary {
   return {
     imported: persist.imported,
+    updated: persist.updated,
     skipped: persist.skipped,
     ignored: result.ignored_pages.length,
+    duplicates_merged: persist.duplicates_merged,
   };
 }
 
@@ -43,7 +43,7 @@ function clampNumber(
  * Crawler, extracts products, and upserts them into Supabase materials.
  *
  * Query params:
- *   ?manufacturer=Alucobond&url=https://www.alucobond.com/en/products/&category=ACP
+ *   ?manufacturer=Alucobond&url=https://www.alucobond.com/en/products/&category=ACP%20Sheet
  *   &maxPages=50&limit=50&timeout=60000
  */
 export async function GET(request: NextRequest) {
@@ -69,12 +69,25 @@ export async function GET(request: NextRequest) {
       discovered_entry_urls: [],
       crawl_start_urls: [],
       crawl_urls: [],
+      poll_updates: [],
       ignored_pages: [],
-      import_summary: { imported: 0, skipped: 0, ignored: 0 },
+      import_summary: {
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        ignored: 0,
+        duplicates_merged: 0,
+      },
       notes: [
         "APIFY_API_TOKEN is not configured. Add it to .env.local and restart the dev server to run the crawl.",
       ],
-      persist: { imported: 0, updated: 0, skipped: 0, errors: [] },
+      persist: {
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        duplicates_merged: 0,
+        errors: [],
+      },
     });
   }
 
@@ -96,27 +109,21 @@ export async function GET(request: NextRequest) {
     return apiError("Query param 'url' must be a valid URL.", 400, "INVALID_REQUEST");
   }
 
-  const maxPages = clampNumber(searchParams.get("maxPages"), 50, 1, 200);
-  const limit = clampNumber(searchParams.get("limit"), 50, 1, 500);
-  const timeoutMs = clampNumber(searchParams.get("timeout"), 60_000, 10_000, 300_000);
+  const defaults = resolveImportLimits(manufacturer);
+  const maxPages = clampNumber(searchParams.get("maxPages"), defaults.maxPages, 1, 200);
+  const limit = clampNumber(searchParams.get("limit"), defaults.limit, 1, 500);
+  const timeoutMs = clampNumber(searchParams.get("timeout"), defaults.timeout, 10_000, 300_000);
 
   try {
-    const importOptions = isGuardianGlassManufacturer(manufacturer)
-      ? buildGuardianGlassImportOptions({
-          websiteUrl,
-          category,
-          maxPages,
-          limit,
-          timeoutMs,
-        })
-      : {
-          manufacturer,
-          websiteUrl,
-          category,
-          maxPages,
-          limit,
-          timeoutMs,
-        };
+    const strategy = resolveImportStrategy(manufacturer);
+    const importOptions = strategy.buildOptions({
+      manufacturer,
+      websiteUrl,
+      category,
+      maxPages,
+      limit,
+      timeoutMs,
+    });
 
     const result = await importManufacturerProducts(importOptions);
 

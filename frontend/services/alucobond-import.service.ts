@@ -1,13 +1,11 @@
-import type { ManufacturerImportOptions } from "@/services/manufacturer-import.service";
-import { importManufacturerProducts } from "@/services/manufacturer-import.service";
-
-export {
+import {
+  importManufacturerProducts,
   WEBSITE_CONTENT_CRAWLER_ACTOR,
   mapCrawlerItemToProduct,
 } from "@/services/manufacturer-import.service";
+import { alucobondStrategy } from "@/services/import-strategies";
 
-const ALUCOBOND_PRODUCTS_URL = "https://www.alucobond.com/en/products/";
-const ALUCOBOND_BASE = "https://www.alucobond.com";
+export { WEBSITE_CONTENT_CRAWLER_ACTOR, mapCrawlerItemToProduct };
 
 export interface AlucobondImportOptions {
   maxPages?: number;
@@ -16,24 +14,19 @@ export interface AlucobondImportOptions {
   pollIntervalMs?: number;
 }
 
-/** Alucobond-specific import config — delegates to the generic manufacturer importer. */
+/** Alucobond-specific import — uses AlucobondStrategy. */
 export async function importAlucobondProducts(
   options: AlucobondImportOptions = {},
 ): Promise<ReturnType<typeof importManufacturerProducts>> {
-  const config: ManufacturerImportOptions = {
-    source: "alucobond.com",
+  const config = alucobondStrategy.buildOptions({
     manufacturer: "Alucobond",
-    websiteUrl: ALUCOBOND_PRODUCTS_URL,
-    category: "ACP",
-    productPagePattern: /\/products\/by-brand\/[^/]+/i,
-    includeUrlGlobs: [`${ALUCOBOND_BASE}/en/products/by-brand/**`],
-    skipHomepageDiscovery: true,
-    maxCrawlDepth: 4,
+    websiteUrl: "https://www.alucobond.com/en/products/",
+    category: "ACP Sheet",
     maxPages: options.maxPages,
     limit: options.limit,
     timeoutMs: options.timeoutMs,
     pollIntervalMs: options.pollIntervalMs,
-  };
+  });
 
   return importManufacturerProducts(config);
 }

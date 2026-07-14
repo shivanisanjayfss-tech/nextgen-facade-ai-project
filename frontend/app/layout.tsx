@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "NextGen Facade AI — AI Powered Facade Material Intelligence",
   description:
-    "Search, compare, and explore facade materials including ACP, glass, stone, HPL, and louvers with AI-powered intelligence.",
+    "Search, compare, and explore facade materials including ACP Sheet, glass, stone, HPL, and louvers with AI-powered intelligence.",
 };
 
 export default function RootLayout({

@@ -8,7 +8,7 @@ VALUES
     'mat-001',
     'Alucobond Plus A2',
     'alucobond-plus-a2',
-    'ACP',
+    'ACP Sheet',
     '3A Composites',
     'Fire-retardant aluminium composite panel with mineral-filled core, ideal for high-rise facades requiring A2-s1,d0 classification.',
     '{"fireRating":"A2-s1, d0 (EN 13501-1)","thermalConductivity":"0.35 W/m·K","weight":"5.9 kg/m²","thickness":"4 mm","windLoad":"Up to 5.0 kPa","uValue":"0.25 W/m²K","colorOptions":["Silver Metallic","Anthracite","Pure White","Custom RAL"],"warranty":"20 years"}',
@@ -98,7 +98,7 @@ VALUES
     'mat-001',
     'Alucobond Plus A2 — Technical Datasheet',
     '3A Composites',
-    'ACP',
+    'ACP Sheet',
     '/datasheets/alucobond-plus-a2',
     '2.4 MB',
     'Rev. 3.2',
@@ -113,14 +113,14 @@ VALUES
   (
     'kb-001',
     'acp-fire-ratings-explained',
-    'ACP Fire Ratings Explained: A1 vs A2 vs B',
+    'ACP Sheet Fire Ratings Explained: A1 vs A2 vs B',
     'Understanding EN 13501-1 classifications is critical for selecting the right aluminium composite panel for your project.',
     'Aluminium composite panels are classified under EN 13501-1 based on their reaction to fire. A1 panels are non-combustible with mineral cores. A2 panels are limited combustibility with fire-retardant cores. B-rated panels have standard PE cores and are restricted on high-rise buildings in many jurisdictions.',
     'Technical Guide',
     'NextGen Facade AI',
     8,
     '2025-05-01T00:00:00Z',
-    ARRAY['ACP','fire-rating','regulations']
+    ARRAY['ACP Sheet','fire-rating','regulations']
   ),
   (
     'kb-002',

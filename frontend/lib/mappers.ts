@@ -1,5 +1,12 @@
+import { normalizeMaterialCategory } from "@/lib/material-categories";
+import { parseMaterialSpecs } from "@/lib/material-specs";
+import { normalizeProductImageUrl } from "@/lib/product-image-url";
 import type { MaterialRow, DatasheetRow, KnowledgeArticleRow } from "@/types/database";
 import type { Datasheet, KnowledgeArticle, Material, MaterialCategory, MaterialSpecs, MaterialSummary } from "@/types";
+
+function normalizeImageUrl(value: string | null | undefined): string | null {
+  return normalizeProductImageUrl(value);
+}
 
 /** Maps a Supabase material row to the domain Material type. */
 export function mapMaterialRow(row: MaterialRow): Material {
@@ -7,13 +14,13 @@ export function mapMaterialRow(row: MaterialRow): Material {
     id: row.id,
     name: row.name,
     slug: row.slug,
-    category: row.category as MaterialCategory,
+    category: normalizeMaterialCategory(row.category),
     manufacturer: row.manufacturer,
     description: row.description,
-    specs: row.specs as MaterialSpecs,
-    imageUrl: row.image_url ?? undefined,
-    datasheetUrl: row.datasheet_url ?? undefined,
-    sourceUrl: row.source_url ?? undefined,
+    specs: parseMaterialSpecs(row.specs) as MaterialSpecs,
+    imageUrl: normalizeImageUrl(row.image_url),
+    datasheetUrl: normalizeImageUrl(row.datasheet_url),
+    sourceUrl: normalizeImageUrl(row.source_url),
     tags: row.tags ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -42,7 +49,7 @@ export function mapDatasheetRow(row: DatasheetRow): Datasheet {
     materialId: row.material_id,
     title: row.title,
     manufacturer: row.manufacturer,
-    category: row.category as MaterialCategory,
+    category: normalizeMaterialCategory(row.category),
     fileUrl: row.file_url,
     fileSize: row.file_size ?? undefined,
     version: row.version ?? undefined,

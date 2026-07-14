@@ -118,7 +118,7 @@ export async function generateComparisonSummary(
   const { ApiError } = await loadGenaiModule();
   const model = getGeminiModel();
 
-  const prompt = `You are a facade engineering expert. Compare these materials concisely (3-4 sentences):\n${JSON.stringify(materials, null, 2)}`;
+  const prompt = `You are a facade engineering expert. Material categories include ACP Sheet (aluminium composite panel sheets), Glass, Stone, HPL, Louvers, Metal, Composite, and Other. Compare these materials concisely (3-4 sentences):\n${JSON.stringify(materials, null, 2)}`;
 
   try {
     const response = await client.models.generateContent({

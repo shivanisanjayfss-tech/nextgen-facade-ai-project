@@ -37,7 +37,7 @@ CREATE TABLE materials (
   name          TEXT        NOT NULL,
   slug          TEXT        NOT NULL UNIQUE,
   category      TEXT        NOT NULL CHECK (category IN (
-                  'ACP', 'Glass', 'Stone', 'HPL', 'Louvers', 'Metal', 'Composite', 'Other'
+                  'ACP Sheet', 'Glass', 'Stone', 'HPL', 'Louvers', 'Metal', 'Composite', 'Other'
                 )),
   manufacturer  TEXT        NOT NULL,
   description   TEXT        NOT NULL DEFAULT '',
@@ -127,19 +127,19 @@ CREATE TRIGGER knowledge_articles_set_updated_at
 ALTER TABLE knowledge_articles DISABLE ROW LEVEL SECURITY;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- SEED: 10 facade materials (ACP, Glass, Stone, HPL + Louvers, Metal, Composite)
+-- SEED: 10 facade materials (ACP Sheet, Glass, Stone, HPL + Louvers, Metal, Composite)
 -- Fixed UUIDs so datasheets can reference them
 -- ─────────────────────────────────────────────────────────────────────────────
 INSERT INTO materials (
   id, name, slug, category, manufacturer, description, specs, image_url, datasheet_url, tags
 ) VALUES
 
--- ACP
+-- ACP Sheet
 (
   '11111111-1111-4111-8111-111111111001',
   'Alucobond Plus A2',
   'alucobond-plus-a2',
-  'ACP',
+  'ACP Sheet',
   '3A Composites',
   'Fire-retardant aluminium composite panel with mineral-filled core. A2-s1,d0 rated for high-rise facades.',
   '{
@@ -160,7 +160,7 @@ INSERT INTO materials (
   '11111111-1111-4111-8111-111111111002',
   'Alpolic FR',
   'alpolic-fr',
-  'ACP',
+  'ACP Sheet',
   'Mitsubishi Chemical',
   'Fire-retardant ACP with luminescent core technology. Suitable for external cladding on buildings over 15m.',
   '{
@@ -173,7 +173,7 @@ INSERT INTO materials (
   }'::jsonb,
   NULL,
   NULL,
-  ARRAY['fire-rated', 'ACP', 'japan']
+  ARRAY['fire-rated', 'ACP Sheet', 'japan']
 ),
 
 -- Glass
@@ -346,7 +346,7 @@ VALUES
   '11111111-1111-4111-8111-111111111001',
   'Alucobond Plus A2 — Technical Datasheet',
   '3A Composites',
-  'ACP',
+  'ACP Sheet',
   '/files/datasheets/alucobond-plus-a2.pdf',
   '2.4 MB',
   'Rev. 3.2',
@@ -380,12 +380,12 @@ INSERT INTO knowledge_articles (slug, title, excerpt, content, category, read_ti
 VALUES
 (
   'acp-fire-ratings-explained',
-  'ACP Fire Ratings Explained: A1 vs A2 vs B',
+  'ACP Sheet Fire Ratings Explained: A1 vs A2 vs B',
   'Understanding EN 13501-1 classifications for aluminium composite panels.',
   'Aluminium composite panels are classified under EN 13501-1 based on reaction to fire. A1 panels are non-combustible with mineral cores. A2 panels are limited combustibility. B-rated panels have PE cores and are restricted on high-rise buildings in many jurisdictions.',
   'Technical Guide',
   8,
-  ARRAY['ACP', 'fire-rating', 'regulations']
+  ARRAY['ACP Sheet', 'fire-rating', 'regulations']
 ),
 (
   'rainscreen-design-principles',

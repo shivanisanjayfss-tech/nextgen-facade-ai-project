@@ -55,4 +55,5 @@ export const DB_TABLES = {
   materials: "materials",
   datasheets: "datasheets",
   knowledgeArticles: "knowledge_articles",
+  importHistory: "import_history",
 } as const;

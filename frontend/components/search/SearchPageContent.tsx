@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/PageContainer";
 import { SearchFilters } from "@/components/search/SearchFilters";
@@ -21,11 +21,16 @@ export function SearchPageContent() {
     category,
   });
 
+  useEffect(() => {
+    setQuery(searchParams.get("q") ?? "");
+    setCategory(searchParams.get("category") ?? undefined);
+  }, [searchParams, setQuery]);
+
   return (
     <>
       <PageHeader
-        title="Material Search"
-        description="Search across ACP, glass, stone, HPL, louvers, and more."
+        title="Materials"
+        description="Browse facade products by category and manufacturer — structured for specification and comparison."
       />
       <div className="mb-6">
         <SearchBar
@@ -42,6 +47,7 @@ export function SearchPageContent() {
         result={result}
         isLoading={isLoading}
         error={error}
+        activeCategory={category}
         onRetry={() => search(query, category)}
       />
     </>

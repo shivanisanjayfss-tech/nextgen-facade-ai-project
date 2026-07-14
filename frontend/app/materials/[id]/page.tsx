@@ -3,7 +3,11 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { MaterialDetailView } from "@/components/materials/MaterialDetailView";
 import { createPageMetadata } from "@/lib/seo";
-import { getMaterialById } from "@/services/material.service";
+import {
+  getManufacturerProductCount,
+  getMaterialById,
+  getRelatedMaterials,
+} from "@/services/material.service";
 
 interface MaterialPageProps {
   params: Promise<{ id: string }>;
@@ -28,10 +32,19 @@ export default async function MaterialPage({ params }: MaterialPageProps) {
 
   if (!material) notFound();
 
+  const [relatedProducts, manufacturerProductCount] = await Promise.all([
+    getRelatedMaterials(material),
+    getManufacturerProductCount(material.manufacturer),
+  ]);
+
   return (
     <AppLayout>
-      <PageContainer size="md">
-        <MaterialDetailView material={material} />
+      <PageContainer size="lg">
+        <MaterialDetailView
+          material={material}
+          relatedProducts={relatedProducts}
+          manufacturerProductCount={manufacturerProductCount}
+        />
       </PageContainer>
     </AppLayout>
   );

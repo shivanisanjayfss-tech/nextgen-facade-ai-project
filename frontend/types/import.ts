@@ -32,7 +32,27 @@ export interface CrawledProduct {
   description?: string;
   datasheetUrl?: string;
   imageUrl?: string;
+  galleryImages?: string[];
+  brochureUrl?: string;
+  installationGuideUrl?: string;
+  technicalManualUrl?: string;
   sourceUrl: string;
+  /** Alucobond page classification when detected during import. */
+  pageType?: "product" | "product-family" | "colour-series";
+  colourSeriesName?: string;
+  productFamily?: string;
+  finish?: string;
+  surface?: string;
+  availableColours?: string[];
+  warranty?: string;
+  coreMaterial?: string;
+  weight?: string;
+  panelWeight?: string;
+  thermalConductivity?: string;
+  windLoad?: string;
+  uValue?: string;
+  inheritSpecsFromSlug?: string;
+  inheritedSpecsFrom?: string;
 }
 
 /** Page skipped during crawl extraction — navigation, informational, or failed quality checks. */
@@ -41,11 +61,21 @@ export interface IgnoredPage {
   reason: string;
 }
 
+/** Snapshot of crawl progress captured during Apify run polling. */
+export interface CrawlPollUpdate {
+  polled_at: string;
+  status: string;
+  crawled_pages: number;
+  crawl_urls: string[];
+}
+
 /** High-level import counts returned after crawl extraction and persistence. */
 export interface ImportSummary {
   imported: number;
+  updated: number;
   skipped: number;
   ignored: number;
+  duplicates_merged: number;
 }
 
 /** Response shape for a crawl + persist import run. */
@@ -70,6 +100,14 @@ export interface CrawlImportResult {
   crawl_start_urls: string[];
   /** All page URLs returned by the crawler before product extraction. */
   crawl_urls: string[];
+  /** Status snapshots recorded every poll interval while the actor runs. */
+  poll_updates: CrawlPollUpdate[];
+  /** Exact Apify actor input JSON sent to the Website Content Crawler. */
+  actor_input?: Record<string, unknown>;
+  /** Apify Console URL for the actor run. */
+  actor_run_url?: string;
+  /** Actor run log — populated only when the crawl produced zero pages. */
+  actor_logs?: string;
   /** Crawled pages excluded from import (navigation, informational, or incomplete). */
   ignored_pages: IgnoredPage[];
   /** Convenience counts — imported/skipped from DB, ignored from extraction filters. */
@@ -83,6 +121,7 @@ export interface MaterialPersistResult {
   imported: number;
   updated: number;
   skipped: number;
+  duplicates_merged: number;
   errors: Array<{
     sourceUrl: string;
     productName: string;

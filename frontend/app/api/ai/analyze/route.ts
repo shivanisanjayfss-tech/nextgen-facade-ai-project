@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
         materials: [
           {
             name: "Alucobond Plus A2",
-            category: "ACP",
+            category: "ACP Sheet",
             specs: { fireRating: "A2-s1,d0", thickness: "4mm" },
           },
         ],

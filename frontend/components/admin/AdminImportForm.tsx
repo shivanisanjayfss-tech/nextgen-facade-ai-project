@@ -8,31 +8,27 @@ import { ErrorMessage } from "@/components/ui/ErrorMessage";
 import { Input } from "@/components/ui/Input";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { buildQueryString } from "@/lib/utils";
+import { resolveImportModeLimits, type ImportMode } from "@/services/import-limits";
 import type { ApiResponse } from "@/types";
-import type { CrawlImportResult } from "@/types/import";
+import type { CrawlImportResult, CrawlPollUpdate } from "@/types/import";
+import { MATERIAL_CATEGORIES } from "@/lib/material-categories";
 import type { MaterialCategory } from "@/types";
 
-const CATEGORIES: MaterialCategory[] = [
-  "ACP",
-  "Glass",
-  "Stone",
-  "HPL",
-  "Louvers",
-  "Metal",
-  "Composite",
-  "Other",
-];
+const CATEGORIES = MATERIAL_CATEGORIES;
 
 const DEFAULT_FORM = {
   manufacturer: "",
   websiteUrl: "",
-  category: "ACP" as MaterialCategory,
+  category: "ACP Sheet" as MaterialCategory,
+  importMode: "quick" as ImportMode,
 };
 
 interface ImportStats {
   imported: number;
   updated: number;
   skipped: number;
+  duplicatesMerged: number;
+  ignored: number;
   productCount: number;
   crawledPages: number;
   status: string;
@@ -42,6 +38,7 @@ interface ImportStats {
   crawlStartUrls: string[];
   crawlUrls: string[];
   ignoredPages: Array<{ url: string; reason: string }>;
+  pollUpdates: CrawlPollUpdate[];
   errors: Array<{ sourceUrl: string; productName: string; message: string }>;
 }
 
@@ -67,12 +64,14 @@ export function AdminImportForm() {
     }
 
     try {
+      const limits = resolveImportModeLimits(form.importMode);
       const query = buildQueryString({
         manufacturer,
         url: websiteUrl,
         category,
-        maxPages: 50,
-        timeout: 120_000,
+        maxPages: limits.maxPages,
+        limit: limits.limit,
+        timeout: limits.timeout,
       });
 
       const response = await fetch(`/api/apify/import${query}`);
@@ -87,8 +86,15 @@ export function AdminImportForm() {
       const { data } = json;
       setStats({
         imported: data.import_summary?.imported ?? data.persist?.imported ?? 0,
-        updated: data.persist?.updated ?? 0,
+        updated:
+          data.import_summary?.updated ?? data.persist?.updated ?? 0,
         skipped: data.import_summary?.skipped ?? data.persist?.skipped ?? 0,
+        duplicatesMerged:
+          data.import_summary?.duplicates_merged ??
+          data.persist?.duplicates_merged ??
+          0,
+        ignored:
+          data.import_summary?.ignored ?? data.ignored_pages?.length ?? 0,
         productCount: data.product_count,
         crawledPages: data.crawled_pages,
         status: data.status,
@@ -98,6 +104,7 @@ export function AdminImportForm() {
         crawlStartUrls: data.crawl_start_urls ?? [],
         crawlUrls: data.crawl_urls ?? [],
         ignoredPages: data.ignored_pages ?? [],
+        pollUpdates: data.poll_updates ?? [],
         errors: data.persist?.errors ?? [],
       });
     } catch (err) {
@@ -151,6 +158,33 @@ export function AdminImportForm() {
 
           <div className="w-full">
             <label
+              htmlFor="import-mode"
+              className="mb-2 block text-sm font-medium text-white/60"
+            >
+              Import mode
+            </label>
+            <select
+              id="import-mode"
+              value={form.importMode}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  importMode: event.target.value as ImportMode,
+                }))
+              }
+              className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white backdrop-blur-xl transition-all focus:border-white/20 focus:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-white/10"
+            >
+              <option value="quick" className="bg-[#0B1120]">
+                Quick Import — 10 pages, 30s timeout
+              </option>
+              <option value="full" className="bg-[#0B1120]">
+                Full Import — 50 pages, 180s timeout
+              </option>
+            </select>
+          </div>
+
+          <div className="w-full">
+            <label
               htmlFor="import-category"
               className="mb-2 block text-sm font-medium text-white/60"
             >
@@ -191,7 +225,11 @@ export function AdminImportForm() {
         <Card className="mb-8">
           <LoadingSpinner
             size="lg"
-            label="Crawling website and saving to Supabase…"
+            label={
+              form.importMode === "quick"
+                ? "Crawling website and saving to Supabase… usually under 30 seconds."
+                : "Crawling website and saving to Supabase… may take up to 3 minutes."
+            }
             className="py-8"
           />
         </Card>
@@ -212,11 +250,16 @@ export function AdminImportForm() {
               </CardDescription>
             </CardHeader>
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <StatCard label="Imported" value={stats.imported} tone="green" />
               <StatCard label="Updated" value={stats.updated} tone="blue" />
               <StatCard label="Skipped" value={stats.skipped} tone="neutral" />
-              <StatCard label="Ignored" value={stats.ignoredPages.length} tone="amber" />
+              <StatCard
+                label="Duplicates merged"
+                value={stats.duplicatesMerged}
+                tone="purple"
+              />
+              <StatCard label="Ignored" value={stats.ignored} tone="amber" />
             </div>
           </Card>
 
@@ -292,6 +335,38 @@ export function AdminImportForm() {
             </Card>
           )}
 
+          {stats.pollUpdates.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Crawl progress</CardTitle>
+                <CardDescription>
+                  Actor status polled every 5s — {stats.pollUpdates.length} update(s).
+                </CardDescription>
+              </CardHeader>
+              <ul className="max-h-64 space-y-3 overflow-y-auto text-sm">
+                {stats.pollUpdates.map((update) => (
+                  <li
+                    key={`${update.polled_at}-${update.status}`}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-white/70"
+                  >
+                    <p>
+                      <span className="text-white/90">{update.status}</span> ·{" "}
+                      {update.crawled_pages} page(s) · {update.polled_at}
+                    </p>
+                    {update.crawl_urls.length > 0 && (
+                      <p className="mt-1 break-all text-white/50">
+                        {update.crawl_urls.slice(0, 3).join(" · ")}
+                        {update.crawl_urls.length > 3
+                          ? ` · +${update.crawl_urls.length - 3} more`
+                          : ""}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           {stats.ignoredPages.length > 0 && (
             <Card>
               <CardHeader>
@@ -361,13 +436,14 @@ function StatCard({
 }: {
   label: string;
   value: number;
-  tone: "green" | "blue" | "neutral" | "amber";
+  tone: "green" | "blue" | "neutral" | "amber" | "purple";
 }) {
   const toneStyles = {
     green: "border-emerald-400/20 bg-emerald-400/5 text-emerald-300",
     blue: "border-sky-400/20 bg-sky-400/5 text-sky-300",
     neutral: "border-white/10 bg-white/[0.03] text-white/70",
     amber: "border-amber-400/20 bg-amber-400/5 text-amber-300",
+    purple: "border-violet-400/20 bg-violet-400/5 text-violet-300",
   };
 
   return (

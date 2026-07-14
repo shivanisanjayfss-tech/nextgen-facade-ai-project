@@ -8,6 +8,7 @@ const envSchema = z.object({
   APIFY_API_TOKEN: z.string().min(1).optional(),
   APIFY_MATERIALS_ACTOR_ID: z.string().min(1).optional(),
   N8N_WEBHOOK_URL: z.string().url().optional(),
+  IMPORT_CRON_SECRET: z.string().min(1).optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
 });
 
@@ -26,6 +27,7 @@ function parseEnv() {
     APIFY_API_TOKEN: emptyToUndefined(process.env.APIFY_API_TOKEN),
     APIFY_MATERIALS_ACTOR_ID: emptyToUndefined(process.env.APIFY_MATERIALS_ACTOR_ID),
     N8N_WEBHOOK_URL: emptyToUndefined(process.env.N8N_WEBHOOK_URL),
+    IMPORT_CRON_SECRET: emptyToUndefined(process.env.IMPORT_CRON_SECRET),
     NEXT_PUBLIC_APP_URL: emptyToUndefined(process.env.NEXT_PUBLIC_APP_URL),
   });
 

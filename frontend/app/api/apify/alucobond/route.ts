@@ -15,8 +15,10 @@ function buildImportSummary(
 ): ImportSummary {
   return {
     imported: persist.imported,
+    updated: persist.updated,
     skipped: persist.skipped,
     ignored: result.ignored_pages.length,
+    duplicates_merged: persist.duplicates_merged,
   };
 }
 
@@ -57,12 +59,25 @@ export async function GET(request: NextRequest) {
       discovered_entry_urls: [],
       crawl_start_urls: [],
       crawl_urls: [],
+      poll_updates: [],
       ignored_pages: [],
-      import_summary: { imported: 0, skipped: 0, ignored: 0 },
+      import_summary: {
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        ignored: 0,
+        duplicates_merged: 0,
+      },
       notes: [
         "APIFY_API_TOKEN is not configured. Add it to .env.local and restart the dev server to run the crawl.",
       ],
-      persist: { imported: 0, updated: 0, skipped: 0, errors: [] },
+      persist: {
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        duplicates_merged: 0,
+        errors: [],
+      },
     });
   }
 

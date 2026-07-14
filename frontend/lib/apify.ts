@@ -5,6 +5,27 @@ import type { ApifyRunStatus } from "@/types/import";
 const APIFY_API_BASE = "https://api.apify.com/v2";
 const APIFY_REQUEST_TIMEOUT_MS = 10_000;
 
+/** Default actor memory for cheerio-based crawls. */
+export const DEFAULT_ACTOR_MEMORY_MBYTES = 2048;
+
+/**
+ * Memory for Playwright browser crawls.
+ * Apify allows 1024 MB minimum; 2048 MB is the practical floor for browser rendering
+ * without requiring 4–8 GB defaults.
+ */
+export const PLAYWRIGHT_ACTOR_MEMORY_MBYTES = 2048;
+
+export type CrawlerType = "cheerio" | "playwright:chrome" | "playwright:adaptive";
+
+/** Resolves actor memory based on crawler type — avoids 8 GB defaults. */
+export function resolveActorMemoryMbytes(
+  crawlerType: CrawlerType = "cheerio",
+): number {
+  return crawlerType.startsWith("playwright")
+    ? PLAYWRIGHT_ACTOR_MEMORY_MBYTES
+    : DEFAULT_ACTOR_MEMORY_MBYTES;
+}
+
 export interface ApifyActorRun {
   id: string;
   actId: string;
@@ -13,6 +34,14 @@ export interface ApifyActorRun {
   finishedAt?: string;
   defaultDatasetId: string;
   statusMessage?: string;
+  consoleUrl?: string;
+  containerUrl?: string;
+}
+
+/** Builds the Apify Console URL for a run (useful for debugging in logs). */
+export function buildRunConsoleUrl(run: ApifyActorRun): string {
+  if (run.consoleUrl) return run.consoleUrl;
+  return `https://console.apify.com/actors/${run.actId}/runs/${run.id}`;
 }
 
 interface ApifyPaginatedDataset<T> {
@@ -189,10 +218,17 @@ export async function testApifyConnection(): Promise<ApifyConnectionTestResult> 
 export async function startActorRun(
   actorId: string,
   input: Record<string, unknown> = {},
+  options: { memoryMbytes?: number } = {},
 ): Promise<ApifyActorRun> {
   const encodedActorId = encodeURIComponent(actorId);
+  const params = new URLSearchParams();
+  if (options.memoryMbytes !== undefined) {
+    params.set("memory", String(options.memoryMbytes));
+  }
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+
   const result = await apifyRequest<{ data: ApifyActorRun }>(
-    `/acts/${encodedActorId}/runs`,
+    `/acts/${encodedActorId}/runs${query}`,
     {
       method: "POST",
       body: JSON.stringify(input),
@@ -268,13 +304,60 @@ export async function getDatasetItems<T = Record<string, unknown>>(
   return result.items ?? [];
 }
 
+/**
+ * Fetches the plain-text run log for an Actor run.
+ * Used for diagnostics when a crawl yields zero pages.
+ */
+export async function getActorRunLog(
+  runId: string,
+  options: { maxChars?: number; timeoutMs?: number } = {},
+): Promise<string> {
+  const token = requireApifyToken();
+  const maxChars = options.maxChars ?? 20_000;
+  const timeoutMs = options.timeoutMs ?? APIFY_REQUEST_TIMEOUT_MS;
+
+  try {
+    const response = await fetch(`${APIFY_API_BASE}/actor-runs/${runId}/log`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      return `Unable to fetch actor log (HTTP ${response.status}).`;
+    }
+
+    const text = await response.text();
+    if (text.length <= maxChars) return text;
+
+    // Keep the tail — crawler errors typically surface near the end.
+    return `…(truncated)…\n${text.slice(text.length - maxChars)}`;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      return `Actor log request timed out after ${timeoutMs}ms.`;
+    }
+    return `Actor log request failed: ${
+      error instanceof Error ? error.message : "unknown error"
+    }`;
+  }
+}
+
 /** Starts a run, optionally waits for completion, and returns the finished run. */
 export async function runActor(
   actorId: string,
   input: Record<string, unknown> = {},
-  options: { waitForFinish?: boolean; timeoutMs?: number; pollIntervalMs?: number } = {},
+  options: {
+    waitForFinish?: boolean;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+    memoryMbytes?: number;
+  } = {},
 ): Promise<ApifyActorRun> {
-  const run = await startActorRun(actorId, input);
+  const run = await startActorRun(actorId, input, {
+    memoryMbytes: options.memoryMbytes ?? DEFAULT_ACTOR_MEMORY_MBYTES,
+  });
 
   if (!options.waitForFinish) {
     return run;

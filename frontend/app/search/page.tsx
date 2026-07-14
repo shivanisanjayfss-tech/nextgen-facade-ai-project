@@ -6,8 +6,8 @@ import { SearchResultSkeleton } from "@/components/ui/Skeleton";
 import { createPageMetadata } from "@/lib/seo";
 
 export const metadata = createPageMetadata({
-  title: "Material Search",
-  description: "Search facade materials including ACP, glass, stone, HPL, and louvers.",
+  title: "Materials",
+  description: "Browse facade materials by category and manufacturer — ACP Sheet, glass, stone, HPL, and more.",
   path: "/search",
 });
 

@@ -5,21 +5,10 @@ import {
 } from "@/lib/apify";
 import { ServiceError } from "@/lib/errors";
 import { env, isApifyConfigured } from "@/lib/env";
+import { normalizeMaterialCategory } from "@/lib/material-categories";
 import type { ImportedMaterialData, MaterialImportResult } from "@/types/import";
-import type { MaterialCategory } from "@/types";
 
 const DEFAULT_IMPORT_TIMEOUT_MS = 300_000;
-
-const MATERIAL_CATEGORIES: MaterialCategory[] = [
-  "ACP",
-  "Glass",
-  "Stone",
-  "HPL",
-  "Louvers",
-  "Metal",
-  "Composite",
-  "Other",
-];
 
 export interface RunMaterialImportOptions {
   /** Apify Actor ID (e.g. `user~actor-name`). Falls back to APIFY_MATERIALS_ACTOR_ID. */
@@ -63,12 +52,7 @@ function asString(value: unknown): string | undefined {
 function normalizeCategory(value: unknown): string {
   const raw = asString(value);
   if (!raw) return "Other";
-
-  const match = MATERIAL_CATEGORIES.find(
-    (category) => category.toLowerCase() === raw.toLowerCase(),
-  );
-
-  return match ?? "Other";
+  return normalizeMaterialCategory(raw);
 }
 
 function normalizeSpecs(value: unknown): Record<string, string | undefined> {

@@ -1,23 +1,18 @@
+import { normalizeMaterialCategory } from "@/lib/material-categories";
+import {
+  ALUCOBOND_BRAND_PARENT_SLUGS,
+  applyInheritedSpecs,
+  isAlucobondBrandProductUrl,
+  isAlucobondColourSeriesUrl,
+} from "@/lib/alucobond-colour-series";
 import { ServiceError } from "@/lib/errors";
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
+import { parseMaterialSpecs } from "@/lib/material-specs";
 import { slugify } from "@/lib/utils";
 import type { MaterialRow } from "@/types/database";
 import { DB_TABLES } from "@/types/database";
 import type { CrawledProduct, MaterialPersistResult } from "@/types/import";
-import type { MaterialCategory } from "@/types";
 
-const MATERIAL_CATEGORIES: MaterialCategory[] = [
-  "ACP",
-  "Glass",
-  "Stone",
-  "HPL",
-  "Louvers",
-  "Metal",
-  "Composite",
-  "Other",
-];
-
-/** DB columns written during import — slug and source_url both have unique constraints. */
 type MaterialUpsertRow = Pick<
   MaterialRow,
   | "name"
@@ -34,15 +29,38 @@ type MaterialUpsertRow = Pick<
 
 type PersistOutcome = "imported" | "updated" | "skipped";
 
-function normalizeCategory(value: string): MaterialCategory {
-  const match = MATERIAL_CATEGORIES.find(
-    (category) => category.toLowerCase() === value.toLowerCase(),
-  );
-  return match ?? "Other";
+type MaterialMatchKind = "source_url" | "slug" | "manufacturer_name" | "none";
+
+interface MaterialMatch {
+  row: MaterialRow | null;
+  kind: MaterialMatchKind;
+}
+
+/** Trims whitespace and collapses repeated spaces. */
+function normalizeText(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+/** Preserves official product casing — only normalizes spacing. */
+function normalizeProductName(name: string): string {
+  return normalizeText(name);
+}
+
+function normalizeCategory(value: string) {
+  return normalizeMaterialCategory(value);
+}
+
+function normalizeTags(tags: string[]): string[] {
+  return Array.from(
+    new Set(tags.map((tag) => slugify(normalizeText(tag))).filter(Boolean)),
+  ).sort();
 }
 
 /** Prefer a stable URL path segment; fall back to product name. */
 function resolveSlug(product: CrawledProduct): string {
+  const fromColourSeries = product.sourceUrl.match(/\/by-colour-series\/([^/]+)/i)?.[1];
+  if (fromColourSeries) return fromColourSeries.toLowerCase();
+
   const fromBrand = product.sourceUrl.match(/\/by-brand\/([^/]+)/i)?.[1];
   if (fromBrand) return fromBrand.toLowerCase();
 
@@ -60,55 +78,124 @@ function resolveSlug(product: CrawledProduct): string {
   return slugify(product.productName);
 }
 
-function buildImportTags(manufacturer: string): string[] {
-  return ["imported", slugify(manufacturer)];
+function extractProductFamily(product: CrawledProduct): string | undefined {
+  if (isAlucobondColourSeriesUrl(product.sourceUrl)) {
+    return product.productFamily ?? "ALUCOBOND";
+  }
+
+  const fromUrl = product.sourceUrl.match(/\/by-brand\/([^/?#]+)/i)?.[1];
+  if (fromUrl) {
+    const head = fromUrl.split("-")[0];
+    if (head === "alucobond") return "ALUCOBOND";
+    if (head) return normalizeText(head);
+  }
+
+  const brandedPrefix = product.productName.match(/^([A-Z][A-Z0-9]+)/)?.[1];
+  if (brandedPrefix && brandedPrefix.length > 2) return brandedPrefix;
+
+  const firstWord = product.productName.split(/\s+/)[0];
+  return firstWord && firstWord.length > 2 ? normalizeText(firstWord) : undefined;
 }
 
-function buildSpecs(product: CrawledProduct): Record<string, string> {
-  const specs: Record<string, string> = {};
-  if (product.fireRating) specs.fireRating = product.fireRating;
-  if (product.thickness) specs.thickness = product.thickness;
-  if (product.dimensions) specs.dimensions = product.dimensions;
+function buildImportTags(product: CrawledProduct): string[] {
+  const tags = new Set<string>(["imported"]);
+
+  tags.add(slugify(normalizeText(product.manufacturer)));
+  tags.add(slugify(normalizeCategory(product.category)));
+
+  if (product.fireRating) {
+    tags.add(slugify(normalizeText(product.fireRating)));
+  }
+
+  const family = extractProductFamily(product);
+  if (family) {
+    tags.add(slugify(family));
+  }
+
+  if (isAlucobondColourSeriesUrl(product.sourceUrl)) {
+    tags.add("colour-series");
+  }
+
+  return normalizeTags(Array.from(tags));
+}
+
+function buildSpecs(product: CrawledProduct): Record<string, unknown> {
+  const specs: Record<string, unknown> = {};
+
+  if (product.fireRating) specs.fireRating = normalizeText(product.fireRating);
+  if (product.thickness) specs.thickness = normalizeText(product.thickness);
+  if (product.dimensions) specs.dimensions = normalizeText(product.dimensions);
+  if (product.warranty) specs.warranty = normalizeText(product.warranty);
+  if (product.coreMaterial) specs.coreMaterial = normalizeText(product.coreMaterial);
+  if (product.weight) specs.weight = normalizeText(product.weight);
+  if (product.panelWeight) specs.panelWeight = normalizeText(product.panelWeight);
+  if (product.thermalConductivity) {
+    specs.thermalConductivity = normalizeText(product.thermalConductivity);
+  }
+  if (product.windLoad) specs.windLoad = normalizeText(product.windLoad);
+  if (product.uValue) specs.uValue = normalizeText(product.uValue);
+
+  if (product.colourSeriesName) specs.colourSeries = normalizeText(product.colourSeriesName);
+  if (product.productFamily) specs.productFamily = normalizeText(product.productFamily);
+  if (product.finish) specs.finish = normalizeText(product.finish);
+  if (product.surface) specs.surface = normalizeText(product.surface);
+  if (product.availableColours?.length) specs.colours = product.availableColours;
+  if (product.inheritedSpecsFrom) {
+    specs.inheritedFrom = normalizeText(product.inheritedSpecsFrom);
+  }
+
+  if (product.galleryImages?.length) {
+    specs.galleryImages = product.galleryImages;
+  }
+
+  if (product.brochureUrl) specs.brochureUrl = product.brochureUrl.trim();
+  if (product.installationGuideUrl) {
+    specs.installationGuideUrl = product.installationGuideUrl.trim();
+  }
+  if (product.technicalManualUrl) {
+    specs.technicalManualUrl = product.technicalManualUrl.trim();
+  }
+
   return specs;
 }
 
-/** Maps a crawled product to a materials-table upsert row. */
+/** Maps a crawled product to a normalized materials-table upsert row. */
 export function mapCrawledProductToMaterialRow(
   product: CrawledProduct,
 ): MaterialUpsertRow {
   return {
-    name: product.productName,
+    name: normalizeProductName(product.productName),
     slug: resolveSlug(product),
     category: normalizeCategory(product.category),
-    manufacturer: product.manufacturer,
-    description: product.description ?? "",
+    manufacturer: normalizeText(product.manufacturer),
+    description: normalizeText(product.description ?? ""),
     specs: buildSpecs(product),
-    image_url: product.imageUrl ?? null,
-    datasheet_url: product.datasheetUrl ?? null,
-    source_url: product.sourceUrl,
-    tags: buildImportTags(product.manufacturer),
+    image_url: product.imageUrl?.trim() || null,
+    datasheet_url: product.datasheetUrl?.trim() || null,
+    source_url: product.sourceUrl.trim(),
+    tags: buildImportTags(product),
   };
 }
 
 function normalizeComparable(value: unknown): string {
   if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) {
+    return JSON.stringify([...value].sort());
+  }
   if (typeof value === "object") return JSON.stringify(value);
-  return String(value).trim();
+  return normalizeText(String(value));
 }
 
-/** Returns true when an existing row already matches the incoming import data. */
+/** Returns true when tracked import fields already match the incoming row. */
 function isUnchanged(existing: MaterialRow, incoming: MaterialUpsertRow): boolean {
   const fields: Array<keyof MaterialUpsertRow> = [
     "name",
-    "slug",
-    "category",
     "manufacturer",
     "description",
-    "specs",
     "image_url",
     "datasheet_url",
-    "source_url",
     "tags",
+    "specs",
   ];
 
   return fields.every(
@@ -137,25 +224,64 @@ function formatPersistError(error: { message: string }, context: string): string
   return `${context}: ${error.message}`;
 }
 
-async function findExistingMaterial(
+function escapeIlikeExact(value: string): string {
+  return value.replace(/[%_\\]/g, "\\$&");
+}
+
+async function findByManufacturerAndName(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   incoming: MaterialUpsertRow,
 ): Promise<MaterialRow | null> {
-  const { data: bySourceUrl, error: sourceError } = await supabase
+  const { data: candidates, error } = await supabase
     .from(DB_TABLES.materials)
     .select("*")
-    .eq("source_url", incoming.source_url)
-    .maybeSingle();
+    .ilike("manufacturer", escapeIlikeExact(incoming.manufacturer));
 
-  if (sourceError) {
+  if (error) {
     throw new ServiceError(
-      formatPersistError(sourceError, "lookup by source_url"),
+      formatPersistError(error, "lookup by manufacturer and name"),
       "DATABASE_ERROR",
       500,
     );
   }
 
-  if (bySourceUrl) return bySourceUrl as MaterialRow;
+  const normalizedManufacturer = incoming.manufacturer.toLowerCase();
+  const normalizedName = incoming.name.toLowerCase();
+
+  const match = (candidates ?? []).find((row) => {
+    const candidate = row as MaterialRow;
+    return (
+      normalizeText(candidate.manufacturer).toLowerCase() === normalizedManufacturer &&
+      normalizeText(candidate.name).toLowerCase() === normalizedName
+    );
+  });
+
+  return match ? (match as MaterialRow) : null;
+}
+
+async function findExistingMaterial(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
+  incoming: MaterialUpsertRow,
+): Promise<MaterialMatch> {
+  if (incoming.source_url) {
+    const { data: bySourceUrl, error: sourceError } = await supabase
+      .from(DB_TABLES.materials)
+      .select("*")
+      .eq("source_url", incoming.source_url)
+      .maybeSingle();
+
+    if (sourceError) {
+      throw new ServiceError(
+        formatPersistError(sourceError, "lookup by source_url"),
+        "DATABASE_ERROR",
+        500,
+      );
+    }
+
+    if (bySourceUrl) {
+      return { row: bySourceUrl as MaterialRow, kind: "source_url" };
+    }
+  }
 
   const { data: bySlug, error: slugError } = await supabase
     .from(DB_TABLES.materials)
@@ -171,67 +297,104 @@ async function findExistingMaterial(
     );
   }
 
-  return (bySlug as MaterialRow | null) ?? null;
+  if (bySlug) {
+    return { row: bySlug as MaterialRow, kind: "slug" };
+  }
+
+  const byManufacturerName = await findByManufacturerAndName(supabase, incoming);
+  if (byManufacturerName) {
+    return { row: byManufacturerName, kind: "manufacturer_name" };
+  }
+
+  return { row: null, kind: "none" };
+}
+
+/** Merges incoming data onto an existing row without creating a duplicate. */
+function mergeIncomingWithExisting(
+  existing: MaterialRow,
+  incoming: MaterialUpsertRow,
+): MaterialUpsertRow {
+  return {
+    ...incoming,
+    slug: existing.slug || incoming.slug,
+    source_url: incoming.source_url || existing.source_url,
+    category: incoming.category || existing.category,
+  };
+}
+
+async function updateExistingMaterial(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
+  existing: MaterialRow,
+  incoming: MaterialUpsertRow,
+): Promise<void> {
+  const payload = mergeIncomingWithExisting(existing, incoming);
+  const { error } = await supabase
+    .from(DB_TABLES.materials)
+    .update(payload)
+    .eq("id", existing.id);
+
+  if (error) {
+    throw new ServiceError(
+      formatPersistError(error, "update existing material"),
+      "DATABASE_ERROR",
+      500,
+    );
+  }
+}
+
+async function insertMaterial(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
+  incoming: MaterialUpsertRow,
+): Promise<boolean> {
+  const { error } = await supabase.from(DB_TABLES.materials).insert(incoming);
+
+  if (!error) return true;
+
+  if (error.code === "23505" || /duplicate key/i.test(error.message)) {
+    return false;
+  }
+
+  throw new ServiceError(
+    formatPersistError(error, "insert material"),
+    "DATABASE_ERROR",
+    500,
+  );
 }
 
 /**
  * Upserts a single material row.
- * Prefers onConflict: source_url; falls back to onConflict: slug for legacy rows.
+ * Matches by source_url, slug, or manufacturer + name — always updates in place.
  */
 async function upsertMaterialRow(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   incoming: MaterialUpsertRow,
-  existing: MaterialRow | null,
-): Promise<PersistOutcome> {
-  if (existing && isUnchanged(existing, incoming)) {
-    return "skipped";
-  }
+  match: MaterialMatch,
+): Promise<{ outcome: PersistOutcome; merged: boolean }> {
+  const existing = match.row;
+  const merged = match.kind === "slug" || match.kind === "manufacturer_name";
 
-  // Legacy row matched by slug but has no source_url — update in place to avoid slug collision.
-  if (existing && !existing.source_url && incoming.source_url) {
-    const { error } = await supabase
-      .from(DB_TABLES.materials)
-      .update(incoming)
-      .eq("id", existing.id);
-
-    if (error) {
-      throw new ServiceError(
-        formatPersistError(error, "update legacy row"),
-        "DATABASE_ERROR",
-        500,
-      );
+  if (existing) {
+    const payload = mergeIncomingWithExisting(existing, incoming);
+    if (isUnchanged(existing, payload)) {
+      return { outcome: "skipped", merged };
     }
 
-    return "updated";
+    await updateExistingMaterial(supabase, existing, incoming);
+    return { outcome: "updated", merged };
   }
 
-  const { error: sourceUpsertError } = await supabase
-    .from(DB_TABLES.materials)
-    .upsert(incoming, { onConflict: "source_url" });
-
-  if (!sourceUpsertError) {
-    return existing ? "updated" : "imported";
+  const inserted = await insertMaterial(supabase, incoming);
+  if (inserted) {
+    return { outcome: "imported", merged: false };
   }
 
-  // Slug collision on a new source_url — resolve via slug upsert instead of creating a duplicate.
-  if (sourceUpsertError.message.includes("duplicate key")) {
-    const { error: slugUpsertError } = await supabase
-      .from(DB_TABLES.materials)
-      .upsert(incoming, { onConflict: "slug" });
-
-    if (slugUpsertError) {
-      throw new ServiceError(
-        formatPersistError(slugUpsertError, "upsert by slug"),
-        "DATABASE_ERROR",
-        500,
-      );
-    }
-
-    return existing ? "updated" : "imported";
+  const refound = await findExistingMaterial(supabase, incoming);
+  if (refound.row) {
+    return upsertMaterialRow(supabase, incoming, refound);
   }
 
   throw new ServiceError(
-    formatPersistError(sourceUpsertError, "upsert by source_url"),
+    "insert material: duplicate key conflict but existing row not found",
     "DATABASE_ERROR",
     500,
   );
@@ -239,8 +402,7 @@ async function upsertMaterialRow(
 
 /**
  * Upserts crawled products into the materials table.
- * Deduplicates via unique source_url / slug constraints. Per-product failures are
- * collected and do not stop the remaining imports.
+ * Deduplicates via source_url, slug, and manufacturer + name.
  */
 export async function persistCrawledProducts(
   products: CrawledProduct[],
@@ -262,18 +424,33 @@ export async function persistCrawledProducts(
     imported: 0,
     updated: 0,
     skipped: 0,
+    duplicates_merged: 0,
     errors: [],
   };
 
+  const needsParentCatalog = products.some(
+    (product) =>
+      product.manufacturer.trim().toLowerCase() === "alucobond" &&
+      isAlucobondColourSeriesUrl(product.sourceUrl),
+  );
+  const parentCatalog = needsParentCatalog
+    ? await loadAlucobondParentCatalog(supabase, products)
+    : new Map<string, AlucobondParentRecord>();
+
   for (const product of products) {
     try {
-      const incoming = mapCrawledProductToMaterialRow(product);
-      const existing = await findExistingMaterial(supabase, incoming);
-      const outcome = await upsertMaterialRow(supabase, incoming, existing);
+      const enriched = enrichColourSeriesProduct(product, parentCatalog);
+      const incoming = mapCrawledProductToMaterialRow(enriched);
+      const match = await findExistingMaterial(supabase, incoming);
+      const { outcome, merged } = await upsertMaterialRow(supabase, incoming, match);
 
       if (outcome === "imported") result.imported += 1;
       else if (outcome === "updated") result.updated += 1;
       else result.skipped += 1;
+
+      if (merged && outcome !== "imported") {
+        result.duplicates_merged += 1;
+      }
     } catch (error) {
       const message =
         error instanceof ServiceError
@@ -291,4 +468,77 @@ export async function persistCrawledProducts(
   }
 
   return result;
+}
+
+interface AlucobondParentRecord {
+  specs: Record<string, unknown>;
+  datasheetUrl: string | null;
+  brochureUrl?: string;
+}
+
+async function loadAlucobondParentCatalog(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
+  products: CrawledProduct[],
+): Promise<Map<string, AlucobondParentRecord>> {
+  const catalog = new Map<string, AlucobondParentRecord>();
+
+  for (const product of products) {
+    if (!isAlucobondBrandProductUrl(product.sourceUrl)) continue;
+
+    const slug = resolveSlug(product);
+    catalog.set(slug, {
+      specs: buildSpecs(product),
+      datasheetUrl: product.datasheetUrl?.trim() || null,
+      brochureUrl: product.brochureUrl,
+    });
+  }
+
+  const parentSlugs = Object.values(ALUCOBOND_BRAND_PARENT_SLUGS);
+  for (const slug of parentSlugs) {
+    if (catalog.has(slug)) continue;
+
+    const { data, error } = await supabase
+      .from(DB_TABLES.materials)
+      .select("specs,datasheet_url,slug")
+      .eq("slug", slug)
+      .maybeSingle();
+
+    if (error) {
+      throw new ServiceError(
+        `lookup parent specs for ${slug}: ${error.message}`,
+        "DATABASE_ERROR",
+        500,
+      );
+    }
+
+    if (!data) continue;
+
+    const row = data as Pick<MaterialRow, "specs" | "datasheet_url" | "slug">;
+    const specs = parseMaterialSpecs(row.specs);
+    catalog.set(slug, {
+      specs,
+      datasheetUrl: row.datasheet_url,
+      brochureUrl:
+        typeof specs.brochureUrl === "string" ? specs.brochureUrl : undefined,
+    });
+  }
+
+  return catalog;
+}
+
+function enrichColourSeriesProduct(
+  product: CrawledProduct,
+  parentCatalog: Map<string, AlucobondParentRecord>,
+): CrawledProduct {
+  if (!isAlucobondColourSeriesUrl(product.sourceUrl) || !product.inheritSpecsFromSlug) {
+    return product;
+  }
+
+  const parent = parentCatalog.get(product.inheritSpecsFromSlug);
+  if (!parent) return product;
+
+  return applyInheritedSpecs(product, parent.specs, {
+    datasheetUrl: parent.datasheetUrl,
+    brochureUrl: parent.brochureUrl,
+  });
 }

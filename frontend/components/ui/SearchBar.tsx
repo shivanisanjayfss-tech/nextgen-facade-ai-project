@@ -70,7 +70,7 @@ export function SearchBar({
           onValueChange?.(e.target.value);
           onChange?.(e);
         }}
-        placeholder="Search ACP, Glass, Stone, HPL, Louvers..."
+        placeholder="Search ACP Sheet, Glass, Stone, HPL, Louvers..."
         className={cn(
           "w-full rounded-2xl border border-white/10 bg-white/[0.04] pl-14 pr-6 text-white placeholder-white/30 shadow-[0_8px_32px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all focus:border-white/20 focus:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-white/10",
           size === "lg" ? "py-5 text-base sm:text-lg" : "py-3 text-sm",

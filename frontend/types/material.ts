@@ -1,5 +1,5 @@
 export type MaterialCategory =
-  | "ACP"
+  | "ACP Sheet"
   | "Glass"
   | "Stone"
   | "HPL"
@@ -28,9 +28,9 @@ export interface Material {
   manufacturer: string;
   description: string;
   specs: MaterialSpecs;
-  imageUrl?: string;
-  datasheetUrl?: string;
-  sourceUrl?: string;
+  imageUrl: string | null;
+  datasheetUrl: string | null;
+  sourceUrl: string | null;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -43,6 +43,6 @@ export interface MaterialSummary {
   category: MaterialCategory;
   manufacturer: string;
   description: string;
-  imageUrl?: string;
+  imageUrl: string | null;
   tags: string[];
 }

@@ -3,11 +3,13 @@ import { Logo } from "@/components/layout/Logo";
 import { Button } from "@/components/ui/Button";
 
 const NAV_LINKS = [
-  { href: "/search", label: "Search" },
+  { href: "/search", label: "Materials" },
+  { href: "/manufacturers", label: "Manufacturers" },
   { href: "/compare", label: "Compare" },
   { href: "/datasheets", label: "Datasheets" },
   { href: "/knowledge", label: "Knowledge" },
   { href: "/admin/import", label: "Import" },
+  { href: "/admin/import-history", label: "History" },
 ];
 
 /** Top navigation bar with logo, links, and login button. */

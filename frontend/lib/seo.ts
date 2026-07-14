@@ -3,7 +3,7 @@ import { env } from "./env";
 
 const SITE_NAME = "NextGen Facade AI";
 const DEFAULT_DESCRIPTION =
-  "AI-powered facade material intelligence platform. Search, compare, and explore ACP, glass, stone, HPL, and louvers.";
+  "AI-powered facade material intelligence platform. Search, compare, and explore ACP Sheet, glass, stone, HPL, and louvers.";
 
 interface PageSeoOptions {
   title: string;

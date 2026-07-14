@@ -1,7 +1,20 @@
 import {
+  detectAlucobondPageType,
+  enrichAlucobondColourSeriesProduct,
+  isAlucobondColourSeriesUrl,
+} from "@/lib/alucobond-colour-series";
+import {
+  isGenericProductName,
+  resolveAlucobondProductNameFromUrl,
+} from "@/lib/alucobond-product-names";
+import { extractProductMedia } from "@/lib/product-media";
+import {
+  buildRunConsoleUrl,
+  getActorRun,
+  getActorRunLog,
   getDatasetItems,
+  resolveActorMemoryMbytes,
   startActorRun,
-  waitForActorRun,
   type ApifyActorRun,
 } from "@/lib/apify";
 import { isServiceError, ServiceError } from "@/lib/errors";
@@ -38,8 +51,14 @@ export interface ManufacturerImportOptions {
   limit?: number;
   /** Max wait time for crawl completion. Default: 60s. */
   timeoutMs?: number;
-  /** Poll interval while waiting. Default: 3s. */
+  /** Poll interval while waiting. Default: 2s. */
   pollIntervalMs?: number;
+  /** Stop waiting once this many valid products are extracted from partial crawl data. */
+  earlyExitProductCount?: number;
+  /** Crawler engine passed to Apify. Default: cheerio. */
+  crawlerType?: "cheerio" | "playwright:chrome" | "playwright:adaptive";
+  /** Optional Apify proxy groups (e.g. RESIDENTIAL) for bot-protected sites. */
+  proxyGroups?: string[];
 }
 
 interface CrawlerItem {
@@ -190,7 +209,206 @@ function isValidProductDescription(description: string | undefined): boolean {
 function isValidProductName(name: string): boolean {
   if (!name || name.length < 2) return false;
   if (name.length > 100) return false;
+  if (isGenericProductName(name)) return false;
   return !/\s+is\s+(?:a|an)\s+/i.test(name);
+}
+
+function trimSentenceFragment(name: string): string {
+  const sentenceBreak = name.search(/\s+is\s+(?:a|an)\s+/i);
+  if (sentenceBreak > 0 && sentenceBreak < 80) {
+    return name.slice(0, sentenceBreak).trim();
+  }
+  return name;
+}
+
+/** Returns a cleaned product name candidate, or undefined when generic/empty. */
+function toProductNameCandidate(
+  candidate: string | undefined,
+  manufacturer: string,
+): string | undefined {
+  if (!candidate) return undefined;
+
+  const cleaned = trimSentenceFragment(cleanProductName(candidate, manufacturer));
+  if (!cleaned || isGenericProductName(cleaned)) return undefined;
+  return cleaned;
+}
+
+function extractOpenGraphTitle(item: CrawlerItem): string | undefined {
+  const openGraph = item.metadata?.openGraph;
+  if (!Array.isArray(openGraph)) return undefined;
+
+  const titleKeys = ["og:title", "twitter:title"];
+  for (const key of titleKeys) {
+    const entry = openGraph.find(
+      (node) => node.property?.toLowerCase() === key.toLowerCase(),
+    );
+    const content = asString(entry?.content);
+    if (content) return content;
+  }
+
+  return undefined;
+}
+
+function extractNameFromJsonLdNode(node: unknown): string | undefined {
+  if (typeof node !== "object" || node === null) return undefined;
+
+  const record = node as Record<string, unknown>;
+  const typeValue = record["@type"];
+  const types = Array.isArray(typeValue) ? typeValue : [typeValue];
+  const isProduct = types.some(
+    (type) => typeof type === "string" && /product/i.test(type),
+  );
+
+  if (!isProduct) return undefined;
+  return asString(record.name);
+}
+
+function extractJsonLdProductName(item: CrawlerItem): string | undefined {
+  const jsonLd = item.metadata?.jsonLd;
+  if (!jsonLd) return undefined;
+
+  const nodes = Array.isArray(jsonLd) ? jsonLd : [jsonLd];
+  for (const node of nodes) {
+    if (typeof node !== "object" || node === null) continue;
+
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record["@graph"])) {
+      for (const graphNode of record["@graph"]) {
+        const name = extractNameFromJsonLdNode(graphNode);
+        if (name) return name;
+      }
+    }
+
+    const name = extractNameFromJsonLdNode(record);
+    if (name) return name;
+  }
+
+  return undefined;
+}
+
+function extractBreadcrumbProductName(item: CrawlerItem): string | undefined {
+  const html = item.html ?? "";
+  if (!html) return undefined;
+
+  const breadcrumbSection = html.match(
+    /<(nav|ol|ul)[^>]*(?:breadcrumb|breadcrumbs)[^>]*>([\s\S]*?)<\/\1>/i,
+  )?.[2];
+
+  if (breadcrumbSection) {
+    const crumbs = [
+      ...breadcrumbSection.matchAll(/<(?:a|span|li)[^>]*>([^<]+)<\/(?:a|span|li)>/gi),
+    ]
+      .map((match) => match[1]?.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    const last = crumbs[crumbs.length - 1];
+    if (last) return last;
+  }
+
+  const jsonLd = item.metadata?.jsonLd;
+  if (!jsonLd) return undefined;
+
+  const nodes = Array.isArray(jsonLd) ? jsonLd : [jsonLd];
+  for (const node of nodes) {
+    if (typeof node !== "object" || node === null) continue;
+    const record = node as Record<string, unknown>;
+    const typeValue = record["@type"];
+    const types = Array.isArray(typeValue) ? typeValue : [typeValue];
+
+    if (!types.some((type) => typeof type === "string" && /breadcrumb/i.test(type))) {
+      continue;
+    }
+
+    const items = record.itemListElement;
+    if (!Array.isArray(items) || items.length === 0) continue;
+
+    const lastItem = items[items.length - 1] as Record<string, unknown>;
+    const name = asString(lastItem.name) ?? asString((lastItem.item as Record<string, unknown>)?.name);
+    if (name) return name;
+  }
+
+  return undefined;
+}
+
+/** Extracts a product title from secondary headings in the main content area. */
+function extractMainContentProductTitle(
+  markdown: string,
+  html: string,
+): string | undefined {
+  for (const match of markdown.matchAll(/^##\s+(.+)$/gm)) {
+    const heading = match[1]?.trim();
+    if (heading && !isGenericProductName(heading)) return heading;
+  }
+
+  for (const match of html.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)) {
+    const plain = match[1]?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (plain && !isGenericProductName(plain)) return plain;
+  }
+
+  return undefined;
+}
+
+/** Strips common site/brand suffixes from a page title to isolate the product name. */
+function cleanProductName(title: string, manufacturer: string): string {
+  const escaped = manufacturer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return title
+    .replace(new RegExp(`\\s*[|–-]\\s*(${escaped}|3A Composites).*?$`, "i"), "")
+    .replace(/\u00ae|\u2122/g, "")
+    .trim();
+}
+
+function extractProductName(
+  item: CrawlerItem,
+  rawTitle: string,
+  manufacturer: string,
+): string {
+  const markdown = item.markdown ?? "";
+  const html = item.html ?? "";
+  const isAlucobond = manufacturer.trim().toLowerCase() === "alucobond";
+  const sourceUrl = asString(item.url) ?? asString(item.loadedUrl) ?? "";
+
+  const markdownHeading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const fromMarkdown = toProductNameCandidate(markdownHeading, manufacturer);
+  if (fromMarkdown) return fromMarkdown;
+
+  const htmlHeading = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
+  if (htmlHeading) {
+    const plainHeading = htmlHeading.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    const fromHtml = toProductNameCandidate(plainHeading, manufacturer);
+    if (fromHtml) return fromHtml;
+  }
+
+  if (isAlucobond) {
+    const fromContent = toProductNameCandidate(
+      extractMainContentProductTitle(markdown, html),
+      manufacturer,
+    );
+    if (fromContent) return fromContent;
+
+    const fromOg = toProductNameCandidate(extractOpenGraphTitle(item), manufacturer);
+    if (fromOg) return fromOg;
+
+    const fromJsonLd = toProductNameCandidate(extractJsonLdProductName(item), manufacturer);
+    if (fromJsonLd) return fromJsonLd;
+
+    const fromBreadcrumb = toProductNameCandidate(
+      extractBreadcrumbProductName(item),
+      manufacturer,
+    );
+    if (fromBreadcrumb) return fromBreadcrumb;
+
+    const fromUrl = toProductNameCandidate(
+      resolveAlucobondProductNameFromUrl(sourceUrl),
+      manufacturer,
+    );
+    if (fromUrl) return fromUrl;
+
+    // Never use the website <title> for Alucobond product pages.
+    return "";
+  }
+
+  const fromTitle = toProductNameCandidate(rawTitle, manufacturer);
+  return fromTitle ?? "";
 }
 
 function pathContainsProductKeyword(pathname: string): boolean {
@@ -277,45 +495,6 @@ function buildExcludeGlobs(websiteUrl: string): string[] {
     `${origin}/**/account/**`,
     ...navigationGlobs,
   ];
-}
-
-/** Strips common site/brand suffixes from a page title to isolate the product name. */
-function cleanProductName(title: string, manufacturer: string): string {
-  const escaped = manufacturer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return title
-    .replace(new RegExp(`\\s*[|–-]\\s*(${escaped}|3A Composites).*?$`, "i"), "")
-    .replace(/\u00ae|\u2122/g, "")
-    .trim();
-}
-
-function extractProductName(
-  item: CrawlerItem,
-  rawTitle: string,
-  manufacturer: string,
-): string {
-  const markdown = item.markdown ?? "";
-  const html = item.html ?? "";
-
-  const markdownHeading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
-  if (markdownHeading && markdownHeading.length <= 80) {
-    return cleanProductName(markdownHeading, manufacturer);
-  }
-
-  const htmlHeading = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
-  if (htmlHeading) {
-    const plainHeading = htmlHeading.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    if (plainHeading && plainHeading.length <= 80) {
-      return cleanProductName(plainHeading, manufacturer);
-    }
-  }
-
-  let name = cleanProductName(rawTitle, manufacturer);
-  const sentenceBreak = name.search(/\s+is\s+(?:a|an)\s+/i);
-  if (sentenceBreak > 0 && sentenceBreak < 80) {
-    name = name.slice(0, sentenceBreak).trim();
-  }
-
-  return name;
 }
 
 function firstMatch(text: string, patterns: RegExp[]): string | undefined {
@@ -409,39 +588,29 @@ function extractDescription(item: CrawlerItem, text: string): string | undefined
   );
 }
 
-function extractDatasheetUrl(item: CrawlerItem, rawText: string): string | undefined {
-  const source = `${item.markdown ?? ""}\n${item.html ?? ""}\n${rawText ?? ""}`;
+function enrichAlucobondCrawledProduct(
+  item: CrawlerItem,
+  product: CrawledProduct,
+  sourceUrl: string,
+): CrawledProduct {
+  const pageType = detectAlucobondPageType(sourceUrl);
 
-  const labelled = source.match(
-    /https?:\/\/[^\s")'<>]*(?:datasheet|data-sheet|technical|declaration|approval)[^\s")'<>]*\.pdf(?:\?[^\s")'<>]*)?/i,
-  );
-  if (labelled) return labelled[0];
+  if (pageType === "colour-series" || isAlucobondColourSeriesUrl(sourceUrl)) {
+    return enrichAlucobondColourSeriesProduct(item, {
+      ...product,
+      pageType: "colour-series",
+    });
+  }
 
-  const anyPdf = source.match(/https?:\/\/[^\s")'<>]+\.pdf(?:\?[^\s")'<>]*)?/i);
-  return anyPdf?.[0];
-}
+  if (pageType === "product") {
+    return { ...product, pageType: "product" };
+  }
 
-function extractImageUrl(item: CrawlerItem): string | undefined {
-  const og = item.metadata?.openGraph?.find(
-    (entry) => entry.property === "og:image" || entry.property === "image",
-  );
-  const fromMeta =
-    asString(og?.content) ??
-    asString(item.metadata?.image) ??
-    asString(item.metadata && (item.metadata as Record<string, unknown>).imageUrl);
-  if (fromMeta) return fromMeta;
+  if (pageType === "product-family") {
+    return { ...product, pageType: "product-family" };
+  }
 
-  const html = item.html ?? "";
-  const metaMatch = html.match(
-    /<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/i,
-  );
-  if (metaMatch) return metaMatch[1];
-
-  const markdown = item.markdown ?? "";
-  const mdImage = markdown.match(
-    /!\[[^\]]*\]\(\s*(https?:\/\/[^)\s]+\.(?:jpg|jpeg|png|webp|avif|gif)(?:\?[^)\s"]*)?)(?:\s+"[^"]*")?\s*\)/i,
-  );
-  return mdImage?.[1];
+  return product;
 }
 
 function isProductPageUrl(url: string, context: ExtractionContext): boolean {
@@ -516,8 +685,9 @@ export function mapCrawlerItemToProduct(
   if (!isValidProductDescription(description)) return null;
 
   const haystack = `${rawTitle}\n${text}`;
+  const media = extractProductMedia(item, sourceUrl);
 
-  return {
+  const baseProduct: CrawledProduct = {
     productName,
     manufacturer: context.manufacturer,
     category: context.category,
@@ -525,10 +695,20 @@ export function mapCrawlerItemToProduct(
     thickness: extractThickness(haystack),
     dimensions: extractDimensions(haystack),
     description,
-    datasheetUrl: extractDatasheetUrl(item, text),
-    imageUrl: extractImageUrl(item),
+    datasheetUrl: media.datasheetUrl,
+    imageUrl: media.mainImageUrl,
+    galleryImages: media.galleryImages.length > 0 ? media.galleryImages : undefined,
+    brochureUrl: media.brochureUrl,
+    installationGuideUrl: media.installationGuideUrl,
+    technicalManualUrl: media.technicalManualUrl,
     sourceUrl,
   };
+
+  if (context.manufacturer.trim().toLowerCase() === "alucobond") {
+    return enrichAlucobondCrawledProduct(item, baseProduct, sourceUrl);
+  }
+
+  return baseProduct;
 }
 
 function resolveIgnoredReason(
@@ -635,24 +815,141 @@ function collectCrawledUrls(rawItems: CrawlerItem[]): string[] {
   return Array.from(urls).sort();
 }
 
+const TERMINAL_RUN_STATUSES = new Set([
+  "SUCCEEDED",
+  "FAILED",
+  "TIMED-OUT",
+  "ABORTED",
+]);
+
+const EARLY_EXIT_CHECK_INTERVAL_MS = 8_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function buildCrawlerInput(
   startUrls: Array<{ url: string }>,
   maxPages: number,
   maxCrawlDepth: number,
   includeUrlGlobs: string[],
   excludeUrlGlobs: string[],
+  crawlerType: "cheerio" | "playwright:chrome" | "playwright:adaptive" = "cheerio",
+  proxyGroups?: string[],
 ): Record<string, unknown> {
+  const proxyConfiguration: Record<string, unknown> = { useApifyProxy: true };
+  if (proxyGroups && proxyGroups.length > 0) {
+    proxyConfiguration.apifyProxyGroups = proxyGroups;
+  }
+
   return {
     startUrls,
-    crawlerType: "cheerio",
+    crawlerType,
     includeUrlGlobs: includeUrlGlobs.map((glob) => ({ glob })),
     excludeUrlGlobs: excludeUrlGlobs.map((glob) => ({ glob })),
     maxCrawlPages: maxPages,
     maxCrawlDepth,
+    maxConcurrency: crawlerType.startsWith("playwright") ? 8 : 15,
+    dynamicContentWaitSecs: crawlerType.startsWith("playwright") ? 3 : 0,
     saveMarkdown: true,
-    saveHtml: true,
-    proxyConfiguration: { useApifyProxy: true },
+    saveHtml: false,
+    proxyConfiguration,
   };
+}
+
+async function waitForCrawlWithPolling(
+  run: ApifyActorRun,
+  options: {
+    timeoutMs: number;
+    pollIntervalMs: number;
+    limit: number;
+    earlyExitProductCount?: number;
+    extractionContext: ExtractionContext;
+  },
+): Promise<{
+  run: ApifyActorRun;
+  finished: boolean;
+  earlyExit: boolean;
+  earlyExitProductCount?: number;
+  pollUpdates: Array<{
+    polled_at: string;
+    status: string;
+    crawled_pages: number;
+    crawl_urls: string[];
+  }>;
+}> {
+  const deadline = Date.now() + options.timeoutMs;
+  let currentRun = run;
+  let finished = false;
+  let earlyExit = false;
+  let earlyExitProductCount: number | undefined;
+  let lastEarlyCheck = 0;
+  const pollUpdates: Array<{
+    polled_at: string;
+    status: string;
+    crawled_pages: number;
+    crawl_urls: string[];
+  }> = [];
+
+  const recordPollSnapshot = async (): Promise<void> => {
+    const partialItems = await getDatasetItems<CrawlerItem>(
+      currentRun.defaultDatasetId,
+      { limit: options.limit },
+    );
+    pollUpdates.push({
+      polled_at: new Date().toISOString(),
+      status: currentRun.status,
+      crawled_pages: partialItems.length,
+      crawl_urls: collectCrawledUrls(partialItems),
+    });
+  };
+
+  await recordPollSnapshot();
+
+  while (Date.now() < deadline) {
+    if (TERMINAL_RUN_STATUSES.has(currentRun.status)) {
+      finished = true;
+      break;
+    }
+
+    if (
+      options.earlyExitProductCount &&
+      Date.now() - lastEarlyCheck >= EARLY_EXIT_CHECK_INTERVAL_MS
+    ) {
+      lastEarlyCheck = Date.now();
+      const partialItems = await getDatasetItems<CrawlerItem>(
+        currentRun.defaultDatasetId,
+        { limit: options.limit },
+      );
+      const { products } = extractCrawlResults(
+        partialItems,
+        options.extractionContext,
+      );
+
+      if (products.length >= options.earlyExitProductCount) {
+        earlyExit = true;
+        earlyExitProductCount = products.length;
+        break;
+      }
+    }
+
+    await sleep(options.pollIntervalMs);
+    currentRun = await getActorRun(run.id);
+    await recordPollSnapshot();
+  }
+
+  if (!finished && !earlyExit) {
+    currentRun = await getActorRun(run.id);
+    finished = TERMINAL_RUN_STATUSES.has(currentRun.status);
+    if (
+      pollUpdates.length === 0 ||
+      pollUpdates[pollUpdates.length - 1]?.status !== currentRun.status
+    ) {
+      await recordPollSnapshot();
+    }
+  }
+
+  return { run: currentRun, finished, earlyExit, earlyExitProductCount, pollUpdates };
 }
 
 /**
@@ -693,7 +990,7 @@ export async function importManufacturerProducts(
   const maxPages = options.maxPages ?? 50;
   const limit = options.limit ?? 50;
   const timeoutMs = options.timeoutMs ?? 60_000;
-  const pollIntervalMs = options.pollIntervalMs ?? 3_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 2_000;
   const maxCrawlDepth = options.maxCrawlDepth ?? 3;
 
   const includeUrlGlobs =
@@ -714,6 +1011,14 @@ export async function importManufacturerProducts(
     notes.push(
       `Using ${discoveredEntryUrls.length} predefined catalogue entry URL(s) to crawl.`,
     );
+    if (
+      manufacturer.toLowerCase().includes("saint") &&
+      discoveredEntryUrls.some((url) => url.includes("saint-gobain-glass.com"))
+    ) {
+      notes.push(
+        "Saint-Gobain .com entry URLs are included; UK mirror URLs are added because saint-gobain-glass.com is Cloudflare-protected.",
+      );
+    }
   } else if (!options.skipHomepageDiscovery && isHomepageUrl(websiteUrl)) {
     discoveredEntryUrls = await discoverHomepageEntryUrls(websiteUrl);
     if (discoveredEntryUrls.length > 0) {
@@ -730,31 +1035,63 @@ export async function importManufacturerProducts(
   const startUrls = resolveCrawlerStartUrls(websiteUrl, discoveredEntryUrls);
   const crawlStartUrls = startUrls.map((entry) => entry.url);
 
-  const run = await startActorRun(
-    WEBSITE_CONTENT_CRAWLER_ACTOR,
-    buildCrawlerInput(
-      startUrls,
-      maxPages,
-      maxCrawlDepth,
-      includeUrlGlobs,
-      excludeUrlGlobs,
-    ),
+  const actorInput = buildCrawlerInput(
+    startUrls,
+    maxPages,
+    maxCrawlDepth,
+    includeUrlGlobs,
+    excludeUrlGlobs,
+    options.crawlerType,
+    options.proxyGroups,
   );
+  const actorMemoryMbytes = resolveActorMemoryMbytes(options.crawlerType);
+
+  // Print the exact actor input JSON before starting the actor (visible in dev server logs).
+  console.info(
+    `[import:${manufacturer}] Website Content Crawler input:\n${JSON.stringify(
+      actorInput,
+      null,
+      2,
+    )}`,
+  );
+  console.info(
+    `[import:${manufacturer}] startUrls=${crawlStartUrls.length} maxCrawlPages=${maxPages} maxCrawlDepth=${maxCrawlDepth} includeUrlGlobs=${includeUrlGlobs.length} memoryMbytes=${actorMemoryMbytes}`,
+  );
+
+  const run = await startActorRun(WEBSITE_CONTENT_CRAWLER_ACTOR, actorInput, {
+    memoryMbytes: actorMemoryMbytes,
+  });
+
+  const actorRunUrl = buildRunConsoleUrl(run);
+  console.info(`[import:${manufacturer}] Actor run started: ${actorRunUrl}`);
 
   let finalRun: ApifyActorRun = run;
   let finished = false;
 
-  try {
-    finalRun = await waitForActorRun(run.id, { timeoutMs, pollIntervalMs });
-    finished = true;
-  } catch (error) {
-    if (isServiceError(error) && error.code === "APIFY_TIMEOUT") {
-      notes.push(
-        `Crawl did not finish within ${timeoutMs}ms — returning partial results captured so far.`,
-      );
-    } else {
-      throw error;
-    }
+  const waitResult = await waitForCrawlWithPolling(run, {
+    timeoutMs,
+    pollIntervalMs,
+    limit,
+    earlyExitProductCount: options.earlyExitProductCount,
+    extractionContext,
+  });
+  finalRun = waitResult.run;
+  finished = waitResult.finished;
+
+  if (waitResult.pollUpdates.length > 0) {
+    notes.push(
+      `Recorded ${waitResult.pollUpdates.length} crawl status update(s) every ${pollIntervalMs / 1000}s.`,
+    );
+  }
+
+  if (waitResult.earlyExit && waitResult.earlyExitProductCount) {
+    notes.push(
+      `Stopped crawl early after finding ${waitResult.earlyExitProductCount} valid product(s).`,
+    );
+  } else if (!waitResult.finished) {
+    notes.push(
+      `Crawl did not finish within ${timeoutMs}ms — returning partial results captured so far.`,
+    );
   }
 
   const rawItems = await getDatasetItems<CrawlerItem>(finalRun.defaultDatasetId, {
@@ -781,6 +1118,18 @@ export async function importManufacturerProducts(
     );
   }
 
+  // When nothing was crawled, pull the actor log so the caller can see why.
+  let actorLogs: string | undefined;
+  if (rawItems.length === 0) {
+    notes.push(
+      "Apify recorded 0 crawled pages — start URLs may be blocked or not match includeUrlGlobs. Verify catalogue URLs are reachable via the Apify proxy.",
+    );
+    actorLogs = await getActorRunLog(finalRun.id);
+    console.warn(
+      `[import:${manufacturer}] 0 pages crawled. Actor run: ${actorRunUrl}\n----- ACTOR LOG -----\n${actorLogs}\n----- END ACTOR LOG -----`,
+    );
+  }
+
   return {
     source: resolveSourceLabel(websiteUrl, options.source),
     manufacturer,
@@ -797,6 +1146,10 @@ export async function importManufacturerProducts(
     discovered_entry_urls: discoveredEntryUrls,
     crawl_start_urls: crawlStartUrls,
     crawl_urls: crawlUrls,
+    poll_updates: waitResult.pollUpdates,
+    actor_input: actorInput,
+    actor_run_url: actorRunUrl,
+    actor_logs: actorLogs,
     ignored_pages: ignoredPages,
     products,
     notes,

@@ -1,5 +1,6 @@
 import { ServiceError } from "@/lib/errors";
 import { mapMaterialRow, mapMaterialSummary } from "@/lib/mappers";
+import { resolveCategoryDbValues } from "@/lib/material-categories";
 import { getMockMaterialById, MOCK_MATERIALS } from "@/lib/mock-data";
 import { getSupabaseServer } from "@/lib/supabase";
 import type { MaterialRow } from "@/types/database";
@@ -40,7 +41,8 @@ export async function getAllMaterials(options?: {
       .order("name", { ascending: true });
 
     if (options?.category) {
-      query = query.eq("category", options.category);
+      const dbCategories = resolveCategoryDbValues(options.category)!;
+      query = query.in("category", dbCategories);
     }
 
     const from = (page - 1) * limit;
@@ -58,9 +60,8 @@ export async function getAllMaterials(options?: {
   let items = MOCK_MATERIALS.map(toSummary);
 
   if (options?.category) {
-    items = items.filter(
-      (m) => m.category.toLowerCase() === options.category!.toLowerCase(),
-    );
+    const dbCategories = resolveCategoryDbValues(options.category)!;
+    items = items.filter((m) => dbCategories.includes(m.category));
   }
 
   const from = (page - 1) * limit;
@@ -70,15 +71,68 @@ export async function getAllMaterials(options?: {
   };
 }
 
-/** Fetches a single material by ID or slug. */
-export async function getMaterialById(id: string): Promise<Material | null> {
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
+
+/** Fetches related materials from the same manufacturer. */
+export async function getRelatedMaterials(
+  material: Material,
+  limit = 24,
+): Promise<MaterialSummary[]> {
   const supabase = getSupabaseServer();
 
   if (supabase) {
     const { data, error } = await supabase
       .from(DB_TABLES.materials)
       .select("*")
-      .or(`id.eq.${id},slug.eq.${id}`)
+      .eq("manufacturer", material.manufacturer)
+      .neq("slug", material.slug)
+      .order("name", { ascending: true })
+      .limit(limit);
+
+    if (error) handleSupabaseError(error, "getRelatedMaterials");
+    return (data as MaterialRow[]).map(mapMaterialSummary);
+  }
+
+  return MOCK_MATERIALS.map(toSummary)
+    .filter(
+      (item) =>
+        item.manufacturer === material.manufacturer && item.slug !== material.slug,
+    )
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, limit);
+}
+
+/** Returns how many catalogue products exist for a manufacturer. */
+export async function getManufacturerProductCount(manufacturer: string): Promise<number> {
+  const supabase = getSupabaseServer();
+
+  if (supabase) {
+    const { count, error } = await supabase
+      .from(DB_TABLES.materials)
+      .select("*", { count: "exact", head: true })
+      .eq("manufacturer", manufacturer);
+
+    if (error) handleSupabaseError(error, "getManufacturerProductCount");
+    return count ?? 0;
+  }
+
+  return MOCK_MATERIALS.filter((item) => item.manufacturer === manufacturer).length;
+}
+
+/** Fetches a single material by ID or slug. */
+export async function getMaterialById(id: string): Promise<Material | null> {
+  const supabase = getSupabaseServer();
+
+  if (supabase) {
+    const column = isUuid(id) ? "id" : "slug";
+    const { data, error } = await supabase
+      .from(DB_TABLES.materials)
+      .select("*")
+      .eq(column, id)
       .maybeSingle();
 
     if (error) handleSupabaseError(error, "getMaterialById");
