@@ -45,12 +45,14 @@ function clampNumber(
  *
  * Query params:
  *   ?manufacturer=Alucobond&url=https://www.alucobond.com/en/products/&category=ACP%20Sheet
+ *   &manufacturerId=<uuid>  (preferred — links products to the registry)
  *   &maxPages=50&limit=50&timeout=60000
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
 
   const manufacturer = searchParams.get("manufacturer")?.trim() ?? "";
+  const manufacturerId = searchParams.get("manufacturerId")?.trim() ?? "";
   const websiteUrl = searchParams.get("url")?.trim() ?? "";
   const category = searchParams.get("category")?.trim() ?? "";
 
@@ -58,6 +60,7 @@ export async function GET(request: NextRequest) {
     return apiSuccess({
       source: websiteUrl || "unknown",
       manufacturer: manufacturer || undefined,
+      manufacturer_id: manufacturerId || undefined,
       website_url: websiteUrl || undefined,
       category: category || undefined,
       actor_id: WEBSITE_CONTENT_CRAWLER_ACTOR,
@@ -93,8 +96,12 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  if (!manufacturer) {
-    return apiError("Query param 'manufacturer' is required.", 400, "INVALID_REQUEST");
+  if (!manufacturer && !manufacturerId) {
+    return apiError(
+      "Query param 'manufacturer' or 'manufacturerId' is required.",
+      400,
+      "INVALID_REQUEST",
+    );
   }
 
   if (!websiteUrl) {
@@ -111,15 +118,15 @@ export async function GET(request: NextRequest) {
     return apiError("Query param 'url' must be a valid URL.", 400, "INVALID_REQUEST");
   }
 
-  const defaults = resolveImportLimits(manufacturer);
+  const defaults = resolveImportLimits(manufacturer || manufacturerId);
   const maxPages = clampNumber(searchParams.get("maxPages"), defaults.maxPages, 1, 200);
   const limit = clampNumber(searchParams.get("limit"), defaults.limit, 1, 500);
   const timeoutMs = clampNumber(searchParams.get("timeout"), defaults.timeout, 10_000, 300_000);
 
   try {
-    const strategy = resolveImportStrategy(manufacturer);
+    const strategy = resolveImportStrategy(manufacturer || manufacturerId);
     const importOptions = strategy.buildOptions({
-      manufacturer,
+      manufacturer: manufacturer || manufacturerId,
       websiteUrl,
       category,
       maxPages,
@@ -130,7 +137,8 @@ export async function GET(request: NextRequest) {
     const result = await importManufacturerProducts(importOptions);
 
     const persistContext = await resolveImportPersistContext({
-      manufacturer,
+      manufacturer: manufacturer || undefined,
+      manufacturerId: manufacturerId || undefined,
       websiteUrl,
     });
 
@@ -161,6 +169,7 @@ export async function GET(request: NextRequest) {
 
     return apiSuccess({
       ...result,
+      manufacturer_id: persistContext?.manufacturerId ?? manufacturerId ?? null,
       notes,
       persist,
       import_summary: buildImportSummary(result, persist),

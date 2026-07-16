@@ -291,10 +291,23 @@ async function applyManufacturerIdentity(
   }
   tags.delete(slugify(normalizeText(incoming.manufacturer)));
 
+  // Prefer explicit registry id from import context, then resolved identity.
+  const manufacturerId =
+    options?.manufacturerId ?? identity.manufacturerId ?? incoming.manufacturer_id ?? null;
+
+  if (!manufacturerId) {
+    console.warn(
+      `[persist] manufacturer_id unresolved for "${incoming.manufacturer}" (${incoming.source_url ?? "no source"}) — writing manufacturer text only for backward compatibility.`,
+    );
+  }
+
   return {
     ...incoming,
-    manufacturer_id: identity.manufacturerId,
-    manufacturer: identity.canonicalName || incoming.manufacturer,
+    manufacturer_id: manufacturerId,
+    manufacturer:
+      options?.registryName?.trim() ||
+      identity.canonicalName ||
+      incoming.manufacturer,
     specs,
     tags: normalizeTags(Array.from(tags)),
   };
@@ -481,6 +494,7 @@ function mergeIncomingWithExisting(
     source_url: incoming.source_url || existing.source_url,
     category: incoming.category || existing.category,
     manufacturer: incoming.manufacturer || existing.manufacturer,
+    manufacturer_id: incoming.manufacturer_id ?? existing.manufacturer_id ?? null,
     image_url:
       incomingImage ??
       pickBestProductImageUrl(existing.image_url, galleryImages) ??
@@ -494,18 +508,20 @@ async function updateExistingMaterial(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   existing: MaterialRow,
   incoming: MaterialUpsertRow,
+  options?: PersistCrawledProductsOptions,
 ): Promise<void> {
   const merged = mergeIncomingWithExisting(existing, incoming);
-  const payload = await applyManufacturerIdentity(merged);
+  const payload = await applyManufacturerIdentity(merged, options);
   let { error } = await supabase
     .from(DB_TABLES.materials)
     .update(payload)
     .eq("id", existing.id);
 
   if (error && isMissingManufacturerIdColumn(error.message)) {
+    const { manufacturer_id: _omit, ...compatPayload } = payload;
     ({ error } = await supabase
       .from(DB_TABLES.materials)
-      .update(merged)
+      .update(compatPayload)
       .eq("id", existing.id));
   }
 
@@ -521,12 +537,14 @@ async function updateExistingMaterial(
 async function insertMaterial(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   incoming: MaterialUpsertRow,
+  options?: PersistCrawledProductsOptions,
 ): Promise<boolean> {
-  const payload = await applyManufacturerIdentity(incoming);
+  const payload = await applyManufacturerIdentity(incoming, options);
   let { error } = await supabase.from(DB_TABLES.materials).insert(payload);
 
   if (error && isMissingManufacturerIdColumn(error.message)) {
-    ({ error } = await supabase.from(DB_TABLES.materials).insert(incoming));
+    const { manufacturer_id: _omit, ...compatPayload } = payload;
+    ({ error } = await supabase.from(DB_TABLES.materials).insert(compatPayload));
   }
 
   if (!error) return true;
@@ -550,6 +568,7 @@ async function upsertMaterialRow(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   incoming: MaterialUpsertRow,
   match: MaterialMatch,
+  options?: PersistCrawledProductsOptions,
 ): Promise<{
   outcome: PersistOutcome;
   merged: boolean;
@@ -596,7 +615,7 @@ async function upsertMaterialRow(
       return { outcome: "skipped", merged, decision };
     }
 
-    await updateExistingMaterial(supabase, existing, incoming);
+    await updateExistingMaterial(supabase, existing, incoming, options);
     const reason = buildPersistReason({
       outcome: "updated",
       matchKind: match.kind,
@@ -630,7 +649,7 @@ async function upsertMaterialRow(
     return { outcome: "updated", merged, decision };
   }
 
-  const inserted = await insertMaterial(supabase, incoming);
+  const inserted = await insertMaterial(supabase, incoming, options);
   if (inserted) {
     const statusReasons = buildStatusReasons({ outcome: "imported" });
     const reason = buildPersistReason({
@@ -722,6 +741,7 @@ export async function persistCrawledProducts(
         supabase,
         incoming,
         match,
+        options,
       );
 
       result.decisions.push(decision);

@@ -15,12 +15,20 @@ export const GET = withApiHandler(async (request: NextRequest) => {
   const q = searchParams.get("q") ?? undefined;
   const category = searchParams.get("category") ?? undefined;
   const manufacturer = searchParams.get("manufacturer") ?? undefined;
+  const manufacturerId = searchParams.get("manufacturerId") ?? undefined;
 
   const rawPage = Number(searchParams.get("page") ?? "1");
   const rawLimit = Number(searchParams.get("limit") ?? "12");
   const { page, limit } = normalizePagination(rawPage, rawLimit, 50);
 
-  const result = await searchMaterials({ q, category, manufacturer, page, limit });
+  const result = await searchMaterials({
+    q,
+    category,
+    manufacturer,
+    manufacturerId,
+    page,
+    limit,
+  });
 
   void logAnalyticsEvent({
     eventName: "search",
@@ -28,6 +36,7 @@ export const GET = withApiHandler(async (request: NextRequest) => {
       q: q ?? "",
       category: category ?? "",
       manufacturer: manufacturer ?? "",
+      manufacturerId: manufacturerId ?? "",
       resultCount: result.total,
     },
   });

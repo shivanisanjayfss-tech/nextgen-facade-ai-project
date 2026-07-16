@@ -11,8 +11,8 @@ export function ManufacturerDirectoryView({ directory }: ManufacturerDirectoryVi
   if (directory.groups.length === 0) {
     return (
       <EmptyState
-        title="No manufacturers yet"
-        description="Import materials to populate the manufacturer directory automatically."
+        title="No manufacturers in registry"
+        description="Apply migrations 014–019 to create and seed the manufacturers table. Public pages can hide zero-product manufacturers, but Admin always shows the full registry."
         icon={
           <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
             <path

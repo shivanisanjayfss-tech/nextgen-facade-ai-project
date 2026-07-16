@@ -2,6 +2,12 @@ import type { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { isServiceError } from "@/lib/errors";
 import {
+  getManufacturerRegistryStats,
+  loadManufacturerProductCounts,
+  resolveRegistryProductCount,
+  syncManufacturerProductCounts,
+} from "@/services/manufacturer-product-counts.service";
+import {
   createManufacturerRegistry,
   searchManufacturerRegistry,
 } from "@/services/manufacturer-registry.service";
@@ -11,6 +17,7 @@ import type { CreateManufacturerRegistryInput } from "@/types/manufacturer-regis
  * GET /api/import/manufacturers
  *
  * Returns manufacturer registry rows for the admin panel with optional search filters.
+ * Includes live product-count stats. Zero-product manufacturers remain in the list.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -22,7 +29,19 @@ export async function GET(request: NextRequest) {
       website: searchParams.get("website") ?? undefined,
     });
 
-    return apiSuccess({ manufacturers });
+    const counts = await loadManufacturerProductCounts();
+    const withLiveCounts = manufacturers.map((row) => ({
+      ...row,
+      total_products: resolveRegistryProductCount(row, counts),
+    }));
+
+    if (searchParams.get("syncCounts") !== "0") {
+      await syncManufacturerProductCounts(withLiveCounts).catch(() => undefined);
+    }
+
+    const stats = await getManufacturerRegistryStats(withLiveCounts);
+
+    return apiSuccess({ manufacturers: withLiveCounts, stats });
   } catch (error) {
     if (isServiceError(error)) {
       return apiError(error.message, error.status, error.code);

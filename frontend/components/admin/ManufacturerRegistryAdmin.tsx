@@ -267,7 +267,7 @@ export function ManufacturerRegistryAdmin() {
     <>
       <PageHeader
         title="Manufacturer Registry"
-        description="Single source of truth for monthly automatic imports. Add a manufacturer here — no code changes required."
+        description="Canonical manufacturer registry for scheduling and product identity. Manufacturers with zero products remain listed here."
       />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -382,8 +382,10 @@ export function ManufacturerRegistryAdmin() {
                 {manufacturers.length === 0 ? (
                   <tr>
                     <td colSpan={10} className="px-6 py-8 text-white/50">
-                      No manufacturers match your filters. Apply migrations 014–018 in Supabase to
-                      enable identity, aliases, and deduplication.
+                      No manufacturers match your filters. If empty with no filters, apply
+                      migrations 014–019 (or run{" "}
+                      <code className="text-white/70">npm run db:apply-manufacturer-registry</code>
+                      ). Zero-product manufacturers remain visible here once the registry is seeded.
                     </td>
                   </tr>
                 ) : (

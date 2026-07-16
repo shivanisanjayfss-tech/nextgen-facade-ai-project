@@ -98,10 +98,12 @@ export function buildImportPersistContextFromRegistry(
 
 /** Resolves registry context for a manual import request. */
 export async function resolveImportPersistContext(options: {
-  manufacturer: string;
+  manufacturer?: string;
+  manufacturerId?: string;
   websiteUrl: string;
 }): Promise<PersistCrawledProductsOptions | undefined> {
   const identity = await resolveManufacturerIdentity({
+    manufacturerId: options.manufacturerId,
     rawName: options.manufacturer,
     website: options.websiteUrl,
   });

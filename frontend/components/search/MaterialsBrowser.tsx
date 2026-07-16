@@ -4,16 +4,22 @@ import { useEffect, useMemo, useState } from "react";
 import { ManufacturerCard } from "@/components/search/ManufacturerCard";
 import {
   groupMaterialsByCategoryAndManufacturer,
+  groupMaterialsWithRegistry,
   manufacturerKey,
   resolveSearchBrowseIntent,
 } from "@/lib/material-browser";
-import type { MaterialSummary } from "@/types";
+import type { ApiResponse, MaterialSummary } from "@/types";
+import type { ManufacturerRegistryRow } from "@/types/manufacturer-registry";
 
 interface MaterialsBrowserProps {
   items: MaterialSummary[];
   total: number;
   query: string;
   activeCategory?: string;
+}
+
+interface ManufacturersResponse {
+  manufacturers: ManufacturerRegistryRow[];
 }
 
 /** Category → manufacturer → products hierarchy for facade consultancy browsing. */
@@ -23,10 +29,48 @@ export function MaterialsBrowser({
   query,
   activeCategory,
 }: MaterialsBrowserProps) {
-  const groups = useMemo(
-    () => groupMaterialsByCategoryAndManufacturer(items),
-    [items],
-  );
+  const [registry, setRegistry] = useState<ManufacturerRegistryRow[]>([]);
+  const [registryLoaded, setRegistryLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRegistry() {
+      try {
+        const response = await fetch("/api/manufacturers");
+        const json = (await response.json()) as ApiResponse<ManufacturersResponse>;
+        if (!cancelled && response.ok && json.success) {
+          setRegistry(json.data.manufacturers ?? []);
+        }
+      } catch {
+        if (!cancelled) setRegistry([]);
+      } finally {
+        if (!cancelled) setRegistryLoaded(true);
+      }
+    }
+
+    void loadRegistry();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const filteredRegistry = useMemo(() => {
+    if (!activeCategory) return registry;
+    return registry.filter(
+      (row) => row.category.toLowerCase() === activeCategory.toLowerCase(),
+    );
+  }, [registry, activeCategory]);
+
+  const groups = useMemo(() => {
+    if (registryLoaded && filteredRegistry.length > 0) {
+      return groupMaterialsWithRegistry(items, filteredRegistry, {
+        hideZeroProductManufacturers: true,
+      });
+    }
+
+    return groupMaterialsByCategoryAndManufacturer(items);
+  }, [items, filteredRegistry, registryLoaded]);
 
   const intent = useMemo(
     () => resolveSearchBrowseIntent(query, groups, activeCategory),
@@ -40,8 +84,12 @@ export function MaterialsBrowser({
     setExpandedKeys(new Set(intent.expandManufacturers));
   }, [autoExpandKey, query, activeCategory, intent.expandManufacturers]);
 
-  function toggleManufacturer(category: string, manufacturer: string) {
-    const key = manufacturerKey(category, manufacturer);
+  function toggleManufacturer(
+    category: string,
+    manufacturer: string,
+    manufacturerId?: string | null,
+  ) {
+    const key = manufacturerKey(category, manufacturer, manufacturerId);
     setExpandedKeys((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
@@ -93,7 +141,11 @@ export function MaterialsBrowser({
 
             <div className="space-y-3">
               {group.manufacturers.map((manufacturerGroup) => {
-                const key = manufacturerKey(group.category, manufacturerGroup.manufacturer);
+                const key = manufacturerKey(
+                  group.category,
+                  manufacturerGroup.manufacturer,
+                  manufacturerGroup.manufacturerId,
+                );
 
                 return (
                   <ManufacturerCard
@@ -105,7 +157,11 @@ export function MaterialsBrowser({
                     count={manufacturerGroup.count}
                     expanded={expandedKeys.has(key)}
                     onToggle={() =>
-                      toggleManufacturer(group.category, manufacturerGroup.manufacturer)
+                      toggleManufacturer(
+                        group.category,
+                        manufacturerGroup.manufacturer,
+                        manufacturerGroup.manufacturerId,
+                      )
                     }
                     highlightedSlug={intent.highlightedSlug}
                   />

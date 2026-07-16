@@ -74,7 +74,9 @@ function filterMaterials(
     results = results.filter((m) => materialMatchesTextQuery(m, query));
   }
 
-  if (params.manufacturer) {
+  if (params.manufacturerId) {
+    results = results.filter((m) => m.manufacturerId === params.manufacturerId);
+  } else if (params.manufacturer) {
     results = results.filter((m) =>
       m.manufacturer.toLowerCase().includes(params.manufacturer!.toLowerCase()),
     );
@@ -126,6 +128,7 @@ function applySearchFilters(
     explicitCategory?: MaterialCategory;
     categoryFromQuery?: MaterialCategory;
     manufacturer?: string;
+    manufacturerId?: string;
   },
 ) {
   let query = dbQuery;
@@ -140,7 +143,9 @@ function applySearchFilters(
     query = query.or(buildTextSearchOrClause(params.query));
   }
 
-  if (params.manufacturer) {
+  if (params.manufacturerId) {
+    query = query.eq("manufacturer_id", params.manufacturerId);
+  } else if (params.manufacturer) {
     query = query.ilike(
       "manufacturer",
       `%${escapeIlikePattern(params.manufacturer)}%`,
@@ -199,6 +204,7 @@ export async function searchMaterials(params: SearchParams): Promise<SearchResul
       explicitCategory: explicitCategory as MaterialCategory | undefined,
       categoryFromQuery,
       manufacturer: params.manufacturer,
+      manufacturerId: params.manufacturerId,
     };
 
     let countBuilder = supabase

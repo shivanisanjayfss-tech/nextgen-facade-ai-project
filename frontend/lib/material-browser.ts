@@ -2,6 +2,7 @@ import { MATERIAL_CATEGORIES } from "@/lib/material-categories";
 import { formatManufacturerGroupLabel } from "@/lib/manufacturer-catalog";
 import { manufacturerIdentityKey } from "@/lib/manufacturer-identity";
 import type { MaterialCategory, MaterialSummary } from "@/types";
+import type { ManufacturerRegistryRow } from "@/types/manufacturer-registry";
 
 /** Frontend-only category synonyms for search (no backend changes). */
 const CATEGORY_SEARCH_SYNONYMS: Partial<
@@ -45,6 +46,14 @@ export interface SearchBrowseIntent {
   highlightedSlug?: string;
 }
 
+export interface GroupMaterialsWithRegistryOptions {
+  /**
+   * Public Materials page may hide zero-product manufacturers.
+   * Admin / full registry views should pass false.
+   */
+  hideZeroProductManufacturers?: boolean;
+}
+
 function manufacturerKey(
   category: string,
   manufacturer: string,
@@ -58,7 +67,11 @@ function manufacturerKey(
 
 function summarizeBrands(products: MaterialSummary[]): string[] {
   return Array.from(
-    new Set(products.map((product) => product.brand).filter((brand): brand is string => Boolean(brand))),
+    new Set(
+      products
+        .map((product) => product.brand)
+        .filter((brand): brand is string => Boolean(brand)),
+    ),
   ).sort((a, b) => a.localeCompare(b));
 }
 
@@ -98,7 +111,142 @@ function isCategoryOnlySearch(query: string, activeCategory?: string): boolean {
   );
 }
 
-/** Groups materials into category → manufacturer → products hierarchy. */
+function buildGroupFromProducts(
+  manufacturer: string,
+  manufacturerId: string | null,
+  products: MaterialSummary[],
+  brandsHint: string[] = [],
+): ManufacturerGroup {
+  const brands = summarizeBrands(products);
+  const mergedBrands = Array.from(new Set([...brandsHint, ...brands])).sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  return {
+    manufacturer,
+    manufacturerId,
+    brands: mergedBrands,
+    displayName: formatManufacturerGroupLabel(manufacturer, mergedBrands),
+    products: [...products].sort((a, b) => a.name.localeCompare(b.name)),
+    count: products.length,
+  };
+}
+
+/**
+ * Groups materials using the manufacturer registry as the source of truth.
+ * Products are attached by manufacturer_id first, then by canonical name.
+ * Orphan products (no registry match) remain visible under their text manufacturer.
+ */
+export function groupMaterialsWithRegistry(
+  items: MaterialSummary[],
+  registry: ManufacturerRegistryRow[],
+  options: GroupMaterialsWithRegistryOptions = {},
+): CategoryGroup[] {
+  const hideZero = options.hideZeroProductManufacturers ?? true;
+  const productsByRegistryId = new Map<string, MaterialSummary[]>();
+  const productsByName = new Map<string, MaterialSummary[]>();
+  const assignedProductIds = new Set<string>();
+
+  const registryById = new Map(registry.map((row) => [row.id, row]));
+  const registryByName = new Map<string, ManufacturerRegistryRow>();
+
+  for (const row of registry) {
+    registryByName.set(row.name.trim().toLowerCase(), row);
+    if (row.brand) {
+      registryByName.set(row.brand.trim().toLowerCase(), row);
+    }
+    for (const alias of row.aliases ?? []) {
+      registryByName.set(alias.trim().toLowerCase(), row);
+    }
+  }
+
+  for (const item of items) {
+    if (item.manufacturerId && registryById.has(item.manufacturerId)) {
+      const bucket = productsByRegistryId.get(item.manufacturerId) ?? [];
+      bucket.push(item);
+      productsByRegistryId.set(item.manufacturerId, bucket);
+      assignedProductIds.add(item.id);
+      continue;
+    }
+
+    const byName = registryByName.get(item.manufacturer.trim().toLowerCase());
+    if (byName) {
+      const bucket = productsByRegistryId.get(byName.id) ?? [];
+      bucket.push({ ...item, manufacturerId: byName.id, manufacturer: byName.name });
+      productsByRegistryId.set(byName.id, bucket);
+      assignedProductIds.add(item.id);
+      continue;
+    }
+
+    const nameKey = item.manufacturer.trim().toLowerCase();
+    const orphanBucket = productsByName.get(nameKey) ?? [];
+    orphanBucket.push(item);
+    productsByName.set(nameKey, orphanBucket);
+  }
+
+  const categoryMap = new Map<string, ManufacturerGroup[]>();
+
+  for (const row of registry) {
+    const products = productsByRegistryId.get(row.id) ?? [];
+    if (hideZero && products.length === 0) continue;
+
+    const category = row.category as MaterialCategory;
+    if (!MATERIAL_CATEGORIES.includes(category) && category !== "Other") {
+      // Keep non-standard categories visible rather than dropping them.
+    }
+
+    const group = buildGroupFromProducts(
+      row.name,
+      row.id,
+      products,
+      row.brand ? [row.brand] : [],
+    );
+
+    const list = categoryMap.get(row.category) ?? [];
+    list.push(group);
+    categoryMap.set(row.category, list);
+  }
+
+  // Backward compatibility: products whose manufacturer text is not in the registry.
+  for (const [, products] of productsByName) {
+    const unassigned = products.filter((product) => !assignedProductIds.has(product.id));
+    if (unassigned.length === 0) continue;
+
+    const manufacturer = unassigned[0]?.manufacturer ?? "Unknown";
+    const manufacturerId = unassigned[0]?.manufacturerId ?? null;
+    const category = unassigned[0]?.category ?? "Other";
+    const group = buildGroupFromProducts(manufacturer, manufacturerId, unassigned);
+    const list = categoryMap.get(category) ?? [];
+    list.push(group);
+    categoryMap.set(category, list);
+  }
+
+  const orderedCategories = [
+    ...MATERIAL_CATEGORIES,
+    ...Array.from(categoryMap.keys()).filter(
+      (category) => !MATERIAL_CATEGORIES.includes(category as MaterialCategory),
+    ),
+  ];
+
+  return orderedCategories
+    .filter((category) => categoryMap.has(category))
+    .map((category) => {
+      const manufacturers = (categoryMap.get(category) ?? []).sort((a, b) =>
+        a.displayName.localeCompare(b.displayName),
+      );
+
+      return {
+        category: category as MaterialCategory,
+        manufacturers,
+        totalProducts: manufacturers.reduce((sum, group) => sum + group.count, 0),
+      };
+    });
+}
+
+/**
+ * Legacy grouping from materials only — kept for fallback when registry is empty.
+ * Prefer groupMaterialsWithRegistry whenever the manufacturers table is available.
+ */
 export function groupMaterialsByCategoryAndManufacturer(
   items: MaterialSummary[],
 ): CategoryGroup[] {
@@ -132,14 +280,7 @@ export function groupMaterialsByCategoryAndManufacturer(
           const manufacturerId = products[0]?.manufacturerId ?? null;
           const brands = summarizeBrands(products);
 
-          return {
-            manufacturer,
-            manufacturerId,
-            brands,
-            displayName: formatManufacturerGroupLabel(manufacturer, brands),
-            products: [...products].sort((a, b) => a.name.localeCompare(b.name)),
-            count: products.length,
-          };
+          return buildGroupFromProducts(manufacturer, manufacturerId, products, brands);
         })
         .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
@@ -200,10 +341,10 @@ export function resolveSearchBrowseIntent(
         if (productNormalized === normalized) {
           expandManufacturers.add(
             manufacturerKey(
-            group.category,
-            manufacturerGroup.manufacturer,
-            manufacturerGroup.manufacturerId,
-          ),
+              group.category,
+              manufacturerGroup.manufacturer,
+              manufacturerGroup.manufacturerId,
+            ),
           );
           highlightedSlug = product.slug;
           bestProductScore = 100;
@@ -217,10 +358,10 @@ export function resolveSearchBrowseIntent(
         ) {
           expandManufacturers.add(
             manufacturerKey(
-            group.category,
-            manufacturerGroup.manufacturer,
-            manufacturerGroup.manufacturerId,
-          ),
+              group.category,
+              manufacturerGroup.manufacturer,
+              manufacturerGroup.manufacturerId,
+            ),
           );
           highlightedSlug = product.slug;
           bestProductScore = normalized.length;

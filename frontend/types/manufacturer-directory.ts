@@ -7,12 +7,15 @@ export type ManufacturerImportStatus =
   | "catalogue";
 
 export interface ManufacturerDirectoryEntry {
+  /** Registry primary key when sourced from manufacturers table. */
+  id?: string;
   name: string;
   slug: string;
   category: MaterialCategory;
   productCount: number;
   country?: string;
   logoUrl?: string;
+  brand?: string;
   importStatus: ManufacturerImportStatus;
   lastImportDate?: string;
   productsHref: string;
@@ -29,4 +32,6 @@ export interface ManufacturerDirectoryResult {
   groups: ManufacturerCategoryGroup[];
   totalManufacturers: number;
   totalProducts: number;
+  /** Always "registry" when manufacturers table is the source of truth. */
+  source?: "registry";
 }

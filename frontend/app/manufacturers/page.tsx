@@ -7,19 +7,21 @@ import { getManufacturerDirectory } from "@/services/manufacturer-directory.serv
 export const metadata = createPageMetadata({
   title: "Manufacturers",
   description:
-    "Browse facade material manufacturers by category — dynamically generated from imported product catalogues.",
+    "Browse facade material manufacturers by category — sourced from the manufacturer registry with live product counts.",
   path: "/manufacturers",
 });
 
 export default async function ManufacturersPage() {
-  const directory = await getManufacturerDirectory();
+  const directory = await getManufacturerDirectory({
+    hideZeroProductManufacturers: true,
+  });
 
   return (
     <AppLayout>
       <PageContainer size="xl">
         <PageHeader
           title="Manufacturer Directory"
-          description="Suppliers organised by material category. Every manufacturer is created automatically from imported products."
+          description="Suppliers from the manufacturer registry, organised by material category. Product counts come from linked catalogue materials."
         />
         <ManufacturerDirectoryView directory={directory} />
       </PageContainer>
