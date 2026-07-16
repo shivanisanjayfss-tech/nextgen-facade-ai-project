@@ -1,4 +1,9 @@
 import { MATERIAL_CATEGORIES } from "@/lib/material-categories";
+import {
+  formatManufacturerGroupLabel,
+  manufacturerCatalogueKey,
+  resolveCanonicalManufacturer,
+} from "@/lib/manufacturer-catalog";
 import type { MaterialCategory, MaterialSummary } from "@/types";
 
 /** Frontend-only category synonyms for search (no backend changes). */
@@ -23,6 +28,8 @@ const CATEGORY_SEARCH_SYNONYMS: Partial<
 
 export interface ManufacturerGroup {
   manufacturer: string;
+  brands: string[];
+  displayName: string;
   products: MaterialSummary[];
   count: number;
 }
@@ -41,7 +48,13 @@ export interface SearchBrowseIntent {
 }
 
 function manufacturerKey(category: string, manufacturer: string): string {
-  return `${category}::${manufacturer}`;
+  return `${category}::${manufacturerCatalogueKey(manufacturer)}`;
+}
+
+function summarizeBrands(products: MaterialSummary[]): string[] {
+  return Array.from(
+    new Set(products.map((product) => product.brand).filter((brand): brand is string => Boolean(brand))),
+  ).sort((a, b) => a.localeCompare(b));
 }
 
 /** Maps a search query to API params without changing backend behaviour. */
@@ -87,28 +100,43 @@ export function groupMaterialsByCategoryAndManufacturer(
   const categoryMap = new Map<string, Map<string, MaterialSummary[]>>();
 
   for (const item of items) {
-    if (!categoryMap.has(item.category)) {
-      categoryMap.set(item.category, new Map());
+    const canonicalManufacturer = resolveCanonicalManufacturer(item.manufacturer);
+    const normalizedItem =
+      canonicalManufacturer === item.manufacturer
+        ? item
+        : { ...item, manufacturer: canonicalManufacturer };
+
+    if (!categoryMap.has(normalizedItem.category)) {
+      categoryMap.set(normalizedItem.category, new Map());
     }
 
-    const manufacturerMap = categoryMap.get(item.category)!;
-    if (!manufacturerMap.has(item.manufacturer)) {
-      manufacturerMap.set(item.manufacturer, []);
+    const manufacturerMap = categoryMap.get(normalizedItem.category)!;
+    const groupKey = manufacturerCatalogueKey(canonicalManufacturer);
+
+    if (!manufacturerMap.has(groupKey)) {
+      manufacturerMap.set(groupKey, []);
     }
 
-    manufacturerMap.get(item.manufacturer)!.push(item);
+    manufacturerMap.get(groupKey)!.push(normalizedItem);
   }
 
   return MATERIAL_CATEGORIES.filter((category) => categoryMap.has(category)).map(
     (category) => {
       const manufacturerMap = categoryMap.get(category)!;
       const manufacturers = Array.from(manufacturerMap.entries())
-        .map(([manufacturer, products]) => ({
-          manufacturer,
-          products: [...products].sort((a, b) => a.name.localeCompare(b.name)),
-          count: products.length,
-        }))
-        .sort((a, b) => a.manufacturer.localeCompare(b.manufacturer));
+        .map(([, products]) => {
+          const manufacturer = products[0]?.manufacturer ?? "Unknown";
+          const brands = summarizeBrands(products);
+
+          return {
+            manufacturer,
+            brands,
+            displayName: formatManufacturerGroupLabel(manufacturer, brands),
+            products: [...products].sort((a, b) => a.name.localeCompare(b.name)),
+            count: products.length,
+          };
+        })
+        .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
       return {
         category,
@@ -144,9 +172,14 @@ export function resolveSearchBrowseIntent(
 
   for (const group of groups) {
     for (const manufacturerGroup of group.manufacturers) {
-      const manufacturerNormalized = manufacturerGroup.manufacturer.toLowerCase();
+      const manufacturerNormalized = manufacturerGroup.displayName.toLowerCase();
+      const canonicalNormalized = manufacturerGroup.manufacturer.toLowerCase();
 
-      if (manufacturerNormalized.includes(normalized)) {
+      if (
+        manufacturerNormalized.includes(normalized) ||
+        canonicalNormalized.includes(normalized) ||
+        manufacturerGroup.brands.some((brand) => brand.toLowerCase().includes(normalized))
+      ) {
         expandManufacturers.add(
           manufacturerKey(group.category, manufacturerGroup.manufacturer),
         );

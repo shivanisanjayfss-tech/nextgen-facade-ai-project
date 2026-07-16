@@ -1,13 +1,29 @@
 import {
+  isAlucobondCatalogueEntry,
+  resolveCanonicalManufacturer,
+} from "@/lib/manufacturer-catalog";
+import {
   detectAlucobondPageType,
   enrichAlucobondColourSeriesProduct,
   isAlucobondColourSeriesUrl,
 } from "@/lib/alucobond-colour-series";
 import {
+  enrichAlpolicProduct,
+  finalizeAlpolicProducts,
+  isAlpolicProductUrl,
+} from "@/lib/alpolic-products";
+import { enrichGlassProduct, isGlassManufacturerUrl } from "@/lib/glass-products";
+import {
   isGenericProductName,
   resolveAlucobondProductNameFromUrl,
 } from "@/lib/alucobond-product-names";
 import { extractProductMedia } from "@/lib/product-media";
+import {
+  extractApplicationList,
+  extractCertificationList,
+  extractFeatureList,
+  extractTechnicalSpecs,
+} from "@/lib/spec-extraction";
 import {
   buildRunConsoleUrl,
   getActorRun,
@@ -29,6 +45,8 @@ export interface ManufacturerImportOptions {
   source?: string;
   /** Manufacturer name stored on each product row. */
   manufacturer: string;
+  /** Product brand stored in specs.brand when applicable. */
+  brand?: string;
   /** Start URL for the crawl — typically the manufacturer's products page. */
   websiteUrl: string;
   /** Default material category applied to every extracted product. */
@@ -82,6 +100,7 @@ interface CrawlerItem {
 
 interface ExtractionContext {
   manufacturer: string;
+  brand?: string;
   category: string;
   productPagePattern?: RegExp;
   productPageMatcher?: (url: string) => boolean;
@@ -364,7 +383,7 @@ function extractProductName(
 ): string {
   const markdown = item.markdown ?? "";
   const html = item.html ?? "";
-  const isAlucobond = manufacturer.trim().toLowerCase() === "alucobond";
+  const isAlucobond = isAlucobondCatalogueEntry(manufacturer);
   const sourceUrl = asString(item.url) ?? asString(item.loadedUrl) ?? "";
 
   const markdownHeading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
@@ -684,16 +703,28 @@ export function mapCrawlerItemToProduct(
   const description = extractDescription(item, text);
   if (!isValidProductDescription(description)) return null;
 
+  const markdown = asString(item.markdown) ?? "";
+  const html = asString(item.html) ?? "";
   const haystack = `${rawTitle}\n${text}`;
+  const specSource = [markdown, text].filter(Boolean).join("\n");
+  const technicalSpecs = extractTechnicalSpecs(specSource, html);
+  const features = extractFeatureList(specSource, html);
+  const applications = extractApplicationList(specSource, html);
+  const certifications = extractCertificationList(specSource, html);
   const media = extractProductMedia(item, sourceUrl);
 
   const baseProduct: CrawledProduct = {
     productName,
-    manufacturer: context.manufacturer,
+    manufacturer: resolveCanonicalManufacturer(context.manufacturer),
+    brand: context.brand,
     category: context.category,
     fireRating: extractFireRating(haystack),
     thickness: extractThickness(haystack),
     dimensions: extractDimensions(haystack),
+    technicalSpecs: Object.keys(technicalSpecs).length > 0 ? technicalSpecs : undefined,
+    features: features.length > 0 ? features : undefined,
+    applications: applications.length > 0 ? applications : undefined,
+    certifications: certifications.length > 0 ? certifications : undefined,
     description,
     datasheetUrl: media.datasheetUrl,
     imageUrl: media.mainImageUrl,
@@ -701,11 +732,20 @@ export function mapCrawlerItemToProduct(
     brochureUrl: media.brochureUrl,
     installationGuideUrl: media.installationGuideUrl,
     technicalManualUrl: media.technicalManualUrl,
+    maintenanceGuideUrl: media.maintenanceGuideUrl,
     sourceUrl,
   };
 
-  if (context.manufacturer.trim().toLowerCase() === "alucobond") {
+  if (isAlucobondCatalogueEntry(context.manufacturer, sourceUrl)) {
     return enrichAlucobondCrawledProduct(item, baseProduct, sourceUrl);
+  }
+
+  if (isAlpolicProductUrl(sourceUrl)) {
+    return enrichAlpolicProduct(item, baseProduct);
+  }
+
+  if (isGlassManufacturerUrl(sourceUrl)) {
+    return enrichGlassProduct(item, baseProduct);
   }
 
   return baseProduct;
@@ -852,7 +892,7 @@ function buildCrawlerInput(
     maxConcurrency: crawlerType.startsWith("playwright") ? 8 : 15,
     dynamicContentWaitSecs: crawlerType.startsWith("playwright") ? 3 : 0,
     saveMarkdown: true,
-    saveHtml: false,
+    saveHtml: true,
     proxyConfiguration,
   };
 }
@@ -999,6 +1039,7 @@ export async function importManufacturerProducts(
 
   const extractionContext: ExtractionContext = {
     manufacturer,
+    brand: options.brand,
     category,
     productPagePattern: options.productPagePattern,
     productPageMatcher: options.productPageMatcher,
@@ -1099,10 +1140,9 @@ export async function importManufacturerProducts(
   });
 
   const crawlUrls = collectCrawledUrls(rawItems);
-  const { products, ignoredPages, discoveredProductUrls } = extractCrawlResults(
-    rawItems,
-    extractionContext,
-  );
+  const { products: extractedProducts, ignoredPages, discoveredProductUrls } =
+    extractCrawlResults(rawItems, extractionContext);
+  const products = await finalizeAlpolicProducts(extractedProducts, rawItems);
 
   if (ignoredPages.length > 0) {
     notes.push(

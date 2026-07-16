@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/Button";
@@ -43,7 +44,7 @@ export function ImportHistoryDashboard() {
     setError(null);
 
     try {
-      const response = await fetch("/api/import/history?view=latest");
+      const response = await fetch("/api/import/history?limit=100");
       const json = (await response.json()) as ApiResponse<HistoryResponse>;
 
       if (!response.ok || !json.success) {
@@ -66,7 +67,7 @@ export function ImportHistoryDashboard() {
     <>
       <PageHeader
         title="Import History"
-        description="Automatic manufacturer import runs — triggered by the scheduler or n8n."
+        description="Automatic manufacturer import runs — triggered by the monthly scheduler or manual Run Now."
       />
 
       <div className="mb-6 flex items-center gap-3">
@@ -88,30 +89,35 @@ export function ImportHistoryDashboard() {
       {!isLoading && !error && (
         <Card>
           <CardHeader>
-            <CardTitle>Latest runs by manufacturer</CardTitle>
+            <CardTitle>Recent import runs</CardTitle>
             <CardDescription>
-              {history.length} manufacturer(s) with import history.
+              {history.length} run(s). Open a run to see every processed product and its status.
             </CardDescription>
           </CardHeader>
 
           {history.length === 0 ? (
             <p className="px-6 pb-6 text-sm text-white/50">
-              No import history yet. Run{" "}
-              <code className="rounded bg-white/5 px-1.5 py-0.5">POST /api/import/run-all</code>{" "}
-              or wait for the daily scheduler.
+              No import history yet. Use <strong>Run Now</strong> on the{" "}
+              <Link href="/admin/import" className="text-sky-300 hover:underline">
+                Admin Import
+              </Link>{" "}
+              page or wait for the monthly scheduler.
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] text-left text-sm">
+              <table className="w-full min-w-[980px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/10 text-white/50">
                     <th className="px-6 py-3 font-medium">Manufacturer</th>
-                    <th className="px-6 py-3 font-medium">Last Run</th>
+                    <th className="px-6 py-3 font-medium">Started</th>
                     <th className="px-6 py-3 font-medium">Status</th>
+                    <th className="px-6 py-3 font-medium text-right">Products</th>
                     <th className="px-6 py-3 font-medium text-right">Imported</th>
                     <th className="px-6 py-3 font-medium text-right">Updated</th>
                     <th className="px-6 py-3 font-medium text-right">Skipped</th>
+                    <th className="px-6 py-3 font-medium text-right">Failed</th>
                     <th className="px-6 py-3 font-medium text-right">Duration</th>
+                    <th className="px-6 py-3 font-medium text-right">Details</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -131,11 +137,23 @@ export function ImportHistoryDashboard() {
                           {row.status}
                         </span>
                       </td>
+                      <td className="px-6 py-4 text-right tabular-nums">
+                        {row.product_decisions?.length ?? row.extracted_products ?? 0}
+                      </td>
                       <td className="px-6 py-4 text-right tabular-nums">{row.imported}</td>
                       <td className="px-6 py-4 text-right tabular-nums">{row.updated}</td>
                       <td className="px-6 py-4 text-right tabular-nums">{row.skipped}</td>
+                      <td className="px-6 py-4 text-right tabular-nums">{row.failed}</td>
                       <td className="px-6 py-4 text-right tabular-nums">
                         {formatDuration(row.duration_seconds)}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <Link
+                          href={`/admin/import-history/${encodeURIComponent(row.id)}`}
+                          className="text-sm font-medium text-sky-300 hover:text-sky-200 hover:underline"
+                        >
+                          View Details
+                        </Link>
                       </td>
                     </tr>
                   ))}

@@ -7,6 +7,8 @@ import type { MaterialSummary } from "@/types";
 
 interface ManufacturerCardProps {
   manufacturer: string;
+  displayName?: string;
+  brands?: string[];
   products: MaterialSummary[];
   count: number;
   expanded: boolean;
@@ -17,12 +19,16 @@ interface ManufacturerCardProps {
 /** Expandable manufacturer card showing product list for facade consultancy browsing. */
 export function ManufacturerCard({
   manufacturer,
+  displayName,
+  brands = [],
   products,
   count,
   expanded,
   onToggle,
   highlightedSlug,
 }: ManufacturerCardProps) {
+  const label = displayName ?? manufacturer;
+  const initialsSource = brands[0] ?? manufacturer;
   const highlightRef = useRef<HTMLAnchorElement>(null);
 
   useEffect(() => {
@@ -54,12 +60,12 @@ export function ManufacturerCard({
               : "border-white/10 bg-white/5 text-white/40",
           )}
         >
-          {manufacturer.slice(0, 2).toUpperCase()}
+          {initialsSource.slice(0, 2).toUpperCase()}
         </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <h3 className="text-base font-semibold text-white">{manufacturer}</h3>
+            <h3 className="text-base font-semibold text-white">{label}</h3>
             <span className="text-sm font-medium text-white/45">({count})</span>
           </div>
           <p className="mt-0.5 text-xs text-white/35">

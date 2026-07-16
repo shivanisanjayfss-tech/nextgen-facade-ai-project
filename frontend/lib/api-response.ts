@@ -14,7 +14,7 @@ export function apiError(message: string, status = 500, code?: string) {
 
 /** Converts a caught error into a standardized JSON error response. */
 export function handleApiError(error: unknown) {
-  const message = getErrorMessage(error);
+  const message = getErrorMessage(error) || "An unexpected error occurred";
   const status = getErrorStatus(error);
   const code = getErrorCode(error);
   return apiError(message, status, code);
@@ -29,7 +29,10 @@ export function withApiHandler(handler: RouteHandler): RouteHandler {
     try {
       return await handler(request, context);
     } catch (error) {
-      console.error("[api]", error);
+      console.error("[api] Unhandled route error:", error);
+      if (error instanceof Error && error.stack) {
+        console.error("[api] Stack trace:\n", error.stack);
+      }
       return handleApiError(error);
     }
   };

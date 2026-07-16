@@ -1,8 +1,11 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, withApiHandler } from "@/lib/api-response";
-import { ServiceError } from "@/lib/errors";
 import { mapMaterialToDetailResponse } from "@/lib/material-api";
-import { requireMaterialById } from "@/services/material.service";
+import {
+  getManufacturerProductCount,
+  getRelatedMaterials,
+  requireMaterialById,
+} from "@/services/material.service";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -11,7 +14,7 @@ interface RouteContext {
 /**
  * GET /api/materials/[id]
  *
- * Fetch a single material by UUID or slug.
+ * Fetch a single material by UUID or slug with gallery, downloads, and related products.
  */
 export const GET = withApiHandler(async (
   _request: NextRequest,
@@ -19,5 +22,16 @@ export const GET = withApiHandler(async (
 ) => {
   const { id } = await context!.params;
   const material = await requireMaterialById(id);
-  return apiSuccess(mapMaterialToDetailResponse(material));
+
+  const [relatedProducts, manufacturerProductCount] = await Promise.all([
+    getRelatedMaterials(material),
+    getManufacturerProductCount(material.manufacturer, material.sourceUrl),
+  ]);
+
+  return apiSuccess(
+    mapMaterialToDetailResponse(material, {
+      relatedProducts,
+      manufacturerProductCount,
+    }),
+  );
 });

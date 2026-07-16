@@ -8,11 +8,13 @@ export interface MaterialRow {
   slug: string;
   category: string;
   manufacturer: string;
+  manufacturer_id: string | null;
   description: string;
   specs: Record<string, unknown>;
   image_url: string | null;
   datasheet_url: string | null;
   source_url: string | null;
+  is_active: boolean;
   tags: string[];
   created_at: string;
   updated_at: string;
@@ -56,4 +58,9 @@ export const DB_TABLES = {
   datasheets: "datasheets",
   knowledgeArticles: "knowledge_articles",
   importHistory: "import_history",
+  importSchedulerSettings: "import_scheduler_settings",
+  importManufacturers: "import_manufacturers",
+  manufacturers: "manufacturers",
+  manufacturerAliases: "manufacturer_aliases",
+  analyticsEvents: "analytics_events",
 } as const;

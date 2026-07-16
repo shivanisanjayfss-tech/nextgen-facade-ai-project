@@ -1,6 +1,23 @@
+import {
+  getManufacturerCatalogueMatchNames,
+  isCatalogueDemoDuplicate,
+  resolveCanonicalManufacturer,
+} from "@/lib/manufacturer-catalog";
 import { ServiceError } from "@/lib/errors";
 import { mapMaterialRow, mapMaterialSummary } from "@/lib/mappers";
+import {
+  filterActiveMaterialRows,
+  hasMaterialsIsActiveColumn,
+  isActiveMaterialRow,
+} from "@/lib/materials-schema";
+import { raiseSupabaseError } from "@/lib/supabase-errors";
 import { resolveCategoryDbValues } from "@/lib/material-categories";
+import {
+  clampRangeEnd,
+  isInvalidRangeWindow,
+  isRangeNotSatisfiableError,
+  normalizePagination,
+} from "@/lib/pagination";
 import { getMockMaterialById, MOCK_MATERIALS } from "@/lib/mock-data";
 import { getSupabaseServer } from "@/lib/supabase";
 import type { MaterialRow } from "@/types/database";
@@ -14,14 +31,33 @@ function toSummary(material: Material): MaterialSummary {
     slug: material.slug,
     category: material.category,
     manufacturer: material.manufacturer,
+    brand: material.brand,
     description: material.description,
     imageUrl: material.imageUrl,
     tags: material.tags,
   };
 }
 
-function handleSupabaseError(error: { message: string }, context: string): never {
-  throw new ServiceError(error.message, "DATABASE_ERROR", 500);
+function handleSupabaseError(
+  error: { message?: string; code?: string; details?: string; hint?: string },
+  context: string,
+): never {
+  raiseSupabaseError(error, context);
+}
+
+export interface MaterialsListResult {
+  items: MaterialSummary[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+function emptyMaterialsResult(
+  page: number,
+  limit: number,
+  total = 0,
+): MaterialsListResult {
+  return { items: [], total, page, limit };
 }
 
 /** Fetches all materials — Supabase when configured, mock data otherwise. */
@@ -29,45 +65,105 @@ export async function getAllMaterials(options?: {
   category?: string;
   page?: number;
   limit?: number;
-}): Promise<{ items: MaterialSummary[]; total: number }> {
-  const page = options?.page ?? 1;
-  const limit = options?.limit ?? 50;
+}): Promise<MaterialsListResult> {
+  const { page, limit, from, to } = normalizePagination(
+    options?.page,
+    options?.limit ?? 50,
+    50,
+  );
   const supabase = getSupabaseServer();
 
   if (supabase) {
-    let query = supabase
+    const useActiveColumn = await hasMaterialsIsActiveColumn(supabase);
+
+    let countQuery = supabase
       .from(DB_TABLES.materials)
-      .select("*", { count: "exact" })
-      .order("name", { ascending: true });
+      .select("*", { count: "exact", head: true });
+
+    if (useActiveColumn) {
+      countQuery = countQuery.eq("is_active", true);
+    }
 
     if (options?.category) {
       const dbCategories = resolveCategoryDbValues(options.category)!;
-      query = query.in("category", dbCategories);
+      countQuery = countQuery.in("category", dbCategories);
     }
 
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-    const { data, error, count } = await query.range(from, to);
+    const { count, error: countError } = await countQuery;
 
-    if (error) handleSupabaseError(error, "getAllMaterials");
+    if (countError) {
+      if (isRangeNotSatisfiableError(countError)) {
+        return emptyMaterialsResult(page, limit, 0);
+      }
+
+      handleSupabaseError(countError, "getAllMaterials");
+    }
+
+    const total = count ?? 0;
+
+    if (isInvalidRangeWindow(from, to, total)) {
+      return emptyMaterialsResult(page, limit, total);
+    }
+
+    let dataQuery = supabase.from(DB_TABLES.materials).select("*");
+
+    if (useActiveColumn) {
+      dataQuery = dataQuery.eq("is_active", true);
+    }
+
+    dataQuery = dataQuery.order("name", { ascending: true });
+
+    if (options?.category) {
+      const dbCategories = resolveCategoryDbValues(options.category)!;
+      dataQuery = dataQuery.in("category", dbCategories);
+    }
+
+    const rangeEnd = clampRangeEnd(from, to, total);
+
+    if (rangeEnd < from) {
+      return emptyMaterialsResult(page, limit, total);
+    }
+
+    const { data, error } = await dataQuery.range(from, rangeEnd);
+
+    if (error) {
+      if (isRangeNotSatisfiableError(error)) {
+        return emptyMaterialsResult(page, limit, total);
+      }
+
+      handleSupabaseError(error, "getAllMaterials");
+    }
 
     return {
-      items: (data as MaterialRow[]).map(mapMaterialSummary),
-      total: count ?? data?.length ?? 0,
+      items: filterActiveMaterialRows(data as MaterialRow[])
+        .map(mapMaterialSummary)
+        .filter((item) => !isCatalogueDemoDuplicate(item)),
+      total,
+      page,
+      limit,
     };
   }
 
-  let items = MOCK_MATERIALS.map(toSummary);
+  let items = MOCK_MATERIALS.map(toSummary).filter(
+    (item) => !isCatalogueDemoDuplicate(item),
+  );
 
   if (options?.category) {
     const dbCategories = resolveCategoryDbValues(options.category)!;
     items = items.filter((m) => dbCategories.includes(m.category));
   }
 
-  const from = (page - 1) * limit;
+  const total = items.length;
+
+  if (isInvalidRangeWindow(from, to, total)) {
+    return emptyMaterialsResult(page, limit, total);
+  }
+
   return {
     items: items.slice(from, from + limit),
-    total: items.length,
+    total,
+    page,
+    limit,
   };
 }
 
@@ -83,44 +179,88 @@ export async function getRelatedMaterials(
   limit = 24,
 ): Promise<MaterialSummary[]> {
   const supabase = getSupabaseServer();
+  const canonical = resolveCanonicalManufacturer(material.manufacturer, material.sourceUrl);
+  const matchNames = getManufacturerCatalogueMatchNames(
+    material.manufacturer,
+    material.sourceUrl,
+  );
 
   if (supabase) {
-    const { data, error } = await supabase
-      .from(DB_TABLES.materials)
-      .select("*")
-      .eq("manufacturer", material.manufacturer)
+    const useActiveColumn = await hasMaterialsIsActiveColumn(supabase);
+
+    let relatedQuery = supabase.from(DB_TABLES.materials).select("*");
+
+    if (useActiveColumn) {
+      relatedQuery = relatedQuery.eq("is_active", true);
+    }
+
+    const { data, error } = await relatedQuery
+      .in("manufacturer", matchNames)
       .neq("slug", material.slug)
       .order("name", { ascending: true })
-      .limit(limit);
+      .limit(limit * 2);
 
     if (error) handleSupabaseError(error, "getRelatedMaterials");
-    return (data as MaterialRow[]).map(mapMaterialSummary);
+
+    return filterActiveMaterialRows(data as MaterialRow[])
+      .map(mapMaterialSummary)
+      .filter(
+        (item) =>
+          !isCatalogueDemoDuplicate(item) &&
+          resolveCanonicalManufacturer(item.manufacturer) === canonical,
+      )
+      .slice(0, limit);
   }
 
   return MOCK_MATERIALS.map(toSummary)
     .filter(
       (item) =>
-        item.manufacturer === material.manufacturer && item.slug !== material.slug,
+        !isCatalogueDemoDuplicate(item) &&
+        resolveCanonicalManufacturer(item.manufacturer) === canonical &&
+        item.slug !== material.slug,
     )
     .sort((a, b) => a.name.localeCompare(b.name))
     .slice(0, limit);
 }
 
 /** Returns how many catalogue products exist for a manufacturer. */
-export async function getManufacturerProductCount(manufacturer: string): Promise<number> {
+export async function getManufacturerProductCount(
+  manufacturer: string,
+  sourceUrl?: string | null,
+): Promise<number> {
   const supabase = getSupabaseServer();
+  const canonical = resolveCanonicalManufacturer(manufacturer, sourceUrl);
+  const matchNames = getManufacturerCatalogueMatchNames(manufacturer, sourceUrl);
 
   if (supabase) {
-    const { count, error } = await supabase
+    const useActiveColumn = await hasMaterialsIsActiveColumn(supabase);
+
+    let countQuery = supabase
       .from(DB_TABLES.materials)
-      .select("*", { count: "exact", head: true })
-      .eq("manufacturer", manufacturer);
+      .select("slug, manufacturer, source_url");
+
+    if (useActiveColumn) {
+      countQuery = countQuery.eq("is_active", true);
+    }
+
+    const { data, error } = await countQuery.in("manufacturer", matchNames);
 
     if (error) handleSupabaseError(error, "getManufacturerProductCount");
-    return count ?? 0;
+
+    return (data ?? []).filter((row) => {
+      const record = row as Pick<MaterialRow, "slug" | "manufacturer" | "source_url">;
+      return (
+        !isCatalogueDemoDuplicate(record) &&
+        resolveCanonicalManufacturer(record.manufacturer, record.source_url) === canonical
+      );
+    }).length;
   }
 
-  return MOCK_MATERIALS.filter((item) => item.manufacturer === manufacturer).length;
+  return MOCK_MATERIALS.filter(
+    (item) =>
+      !isCatalogueDemoDuplicate(item) &&
+      resolveCanonicalManufacturer(item.manufacturer, item.sourceUrl) === canonical,
+  ).length;
 }
 
 /** Fetches a single material by ID or slug. */
@@ -138,7 +278,12 @@ export async function getMaterialById(id: string): Promise<Material | null> {
     if (error) handleSupabaseError(error, "getMaterialById");
     if (!data) return null;
 
-    return mapMaterialRow(data as MaterialRow);
+    const row = data as MaterialRow;
+    const material = mapMaterialRow(row);
+    if (isCatalogueDemoDuplicate(material)) return null;
+    if (!isActiveMaterialRow(row)) return null;
+
+    return material;
   }
 
   return getMockMaterialById(id) ?? null;
@@ -149,13 +294,18 @@ export async function getMaterialsByIds(ids: string[]): Promise<Material[]> {
   const supabase = getSupabaseServer();
 
   if (supabase) {
-    const { data, error } = await supabase
-      .from(DB_TABLES.materials)
-      .select("*")
-      .in("id", ids);
+    const useActiveColumn = await hasMaterialsIsActiveColumn(supabase);
+
+    let materialsQuery = supabase.from(DB_TABLES.materials).select("*");
+
+    if (useActiveColumn) {
+      materialsQuery = materialsQuery.eq("is_active", true);
+    }
+
+    const { data, error } = await materialsQuery.in("id", ids);
 
     if (error) handleSupabaseError(error, "getMaterialsByIds");
-    return (data as MaterialRow[]).map(mapMaterialRow);
+    return filterActiveMaterialRows(data as MaterialRow[]).map(mapMaterialRow);
   }
 
   return MOCK_MATERIALS.filter((m) => ids.includes(m.id));

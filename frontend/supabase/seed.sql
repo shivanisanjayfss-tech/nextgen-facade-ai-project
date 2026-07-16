@@ -5,20 +5,6 @@
 INSERT INTO materials (id, name, slug, category, manufacturer, description, specs, image_url, datasheet_url, tags, created_at, updated_at)
 VALUES
   (
-    'mat-001',
-    'Alucobond Plus A2',
-    'alucobond-plus-a2',
-    'ACP Sheet',
-    '3A Composites',
-    'Fire-retardant aluminium composite panel with mineral-filled core, ideal for high-rise facades requiring A2-s1,d0 classification.',
-    '{"fireRating":"A2-s1, d0 (EN 13501-1)","thermalConductivity":"0.35 W/m·K","weight":"5.9 kg/m²","thickness":"4 mm","windLoad":"Up to 5.0 kPa","uValue":"0.25 W/m²K","colorOptions":["Silver Metallic","Anthracite","Pure White","Custom RAL"],"warranty":"20 years"}',
-    '/images/materials/acp-alucobond.jpg',
-    '/datasheets/alucobond-plus-a2',
-    ARRAY['fire-rated','high-rise','metallic'],
-    '2025-01-15T00:00:00Z',
-    '2025-06-01T00:00:00Z'
-  ),
-  (
     'mat-002',
     'Guardian SunGuard SNX 60/28',
     'guardian-sunguard-snx-60-28',
@@ -87,23 +73,6 @@ VALUES
     ARRAY['zinc','standing-seam','natural-patina'],
     '2025-04-01T00:00:00Z',
     '2025-06-20T00:00:00Z'
-  )
-ON CONFLICT (id) DO NOTHING;
-
--- Datasheets
-INSERT INTO datasheets (id, material_id, title, manufacturer, category, file_url, file_size, version, published_at, pages)
-VALUES
-  (
-    'ds-mat-001',
-    'mat-001',
-    'Alucobond Plus A2 — Technical Datasheet',
-    '3A Composites',
-    'ACP Sheet',
-    '/datasheets/alucobond-plus-a2',
-    '2.4 MB',
-    'Rev. 3.2',
-    '2025-06-01T00:00:00Z',
-    12
   )
 ON CONFLICT (id) DO NOTHING;
 

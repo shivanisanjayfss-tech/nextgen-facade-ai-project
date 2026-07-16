@@ -9,6 +9,7 @@ export type MaterialCategory =
   | "Other";
 
 export interface MaterialSpecs {
+  brand?: string;
   fireRating?: string;
   thermalConductivity?: string;
   weight?: string;
@@ -26,6 +27,7 @@ export interface Material {
   slug: string;
   category: MaterialCategory;
   manufacturer: string;
+  brand: string | null;
   description: string;
   specs: MaterialSpecs;
   imageUrl: string | null;
@@ -42,6 +44,7 @@ export interface MaterialSummary {
   slug: string;
   category: MaterialCategory;
   manufacturer: string;
+  brand: string | null;
   description: string;
   imageUrl: string | null;
   tags: string[];

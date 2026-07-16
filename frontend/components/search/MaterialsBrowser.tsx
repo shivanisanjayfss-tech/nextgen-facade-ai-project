@@ -99,6 +99,8 @@ export function MaterialsBrowser({
                   <ManufacturerCard
                     key={key}
                     manufacturer={manufacturerGroup.manufacturer}
+                    displayName={manufacturerGroup.displayName}
+                    brands={manufacturerGroup.brands}
                     products={manufacturerGroup.products}
                     count={manufacturerGroup.count}
                     expanded={expandedKeys.has(key)}

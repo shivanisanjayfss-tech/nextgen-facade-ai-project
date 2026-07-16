@@ -13,7 +13,8 @@ export class AlucobondStrategy implements ManufacturerImportStrategy {
   readonly displayName = "Alucobond";
 
   matches(manufacturer: string): boolean {
-    return manufacturer.trim().toLowerCase() === "alucobond";
+    const normalized = manufacturer.trim().toLowerCase();
+    return normalized === "alucobond" || normalized === "3a composites";
   }
 
   getImportLimits(): ImportLimits {
@@ -25,7 +26,8 @@ export class AlucobondStrategy implements ManufacturerImportStrategy {
 
     return {
       source: "alucobond.com",
-      manufacturer: "Alucobond",
+      manufacturer: "3A Composites",
+      brand: params.brand ?? "ALUCOBOND",
       websiteUrl: ALUCOBOND_PRODUCTS_URL,
       category: params.category || "ACP Sheet",
       productPagePattern: /\/products\/(?:by-brand|by-colour-series)\/[^/]+/i,

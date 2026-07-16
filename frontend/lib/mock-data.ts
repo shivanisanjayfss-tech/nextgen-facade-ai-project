@@ -2,36 +2,12 @@ import type { Datasheet, KnowledgeArticle, Material } from "@/types";
 
 export const MOCK_MATERIALS: Material[] = [
   {
-    id: "mat-001",
-    name: "Alucobond Plus A2",
-    slug: "alucobond-plus-a2",
-    category: "ACP Sheet",
-    manufacturer: "3A Composites",
-    description:
-      "Fire-retardant aluminium composite panel with mineral-filled core, ideal for high-rise facades requiring A2-s1,d0 classification.",
-    specs: {
-      fireRating: "A2-s1, d0 (EN 13501-1)",
-      thermalConductivity: "0.35 W/m·K",
-      weight: "5.9 kg/m²",
-      thickness: "4 mm",
-      windLoad: "Up to 5.0 kPa",
-      uValue: "0.25 W/m²K",
-      colorOptions: ["Silver Metallic", "Anthracite", "Pure White", "Custom RAL"],
-      warranty: "20 years",
-    },
-    imageUrl: "/images/materials/acp-alucobond.jpg",
-    datasheetUrl: "/datasheets/alucobond-plus-a2",
-    sourceUrl: null,
-    tags: ["fire-rated", "high-rise", "metallic"],
-    createdAt: "2025-01-15T00:00:00Z",
-    updatedAt: "2025-06-01T00:00:00Z",
-  },
-  {
     id: "mat-002",
     name: "Guardian SunGuard SNX 60/28",
     slug: "guardian-sunguard-snx-60-28",
     category: "Glass",
     manufacturer: "Guardian Glass",
+    brand: null,
     description:
       "Triple silver low-E coated glass delivering exceptional solar control and visible light transmission for curtain wall applications.",
     specs: {
@@ -57,6 +33,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "neolith-iron-corten",
     category: "Stone",
     manufacturer: "Neolith",
+    brand: null,
     description:
       "Sintered stone surface with authentic corten steel aesthetic, UV-stable and suitable for ventilated rainscreen facades.",
     specs: {
@@ -82,6 +59,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "trespa-meteon-fr",
     category: "HPL",
     manufacturer: "Trespa",
+    brand: null,
     description:
       "Fire-retardant high-pressure laminate cladding with through-color technology for long-lasting exterior performance.",
     specs: {
@@ -107,6 +85,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "hunter-douglas-84r-louver",
     category: "Louvers",
     manufacturer: "Hunter Douglas Architectural",
+    brand: null,
     description:
       "Extruded aluminium elliptical louver system for solar shading and ventilation, available in fixed and motorized configurations.",
     specs: {
@@ -131,6 +110,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "zinc-standing-seam-panel",
     category: "Metal",
     manufacturer: "Rheinzink",
+    brand: null,
     description:
       "Pre-patinated titanium-zinc standing seam cladding with natural self-healing patina for premium architectural envelopes.",
     specs: {

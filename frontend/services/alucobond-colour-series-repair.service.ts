@@ -82,7 +82,7 @@ export async function repairAlucobondColourSeriesMaterials(): Promise<RepairAluc
   const { data: materials, error: listError } = await supabase
     .from(DB_TABLES.materials)
     .select("*")
-    .ilike("manufacturer", "Alucobond");
+    .or("manufacturer.ilike.Alucobond,manufacturer.ilike.3A Composites,source_url.ilike.%alucobond.com%");
 
   if (listError) {
     throw new ServiceError(listError.message, "DATABASE_ERROR", 500);

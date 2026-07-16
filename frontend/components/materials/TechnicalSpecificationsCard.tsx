@@ -21,73 +21,34 @@ const SECTION_ICONS: Record<SpecSectionId, ReactNode> = {
   commercial: <CommercialIcon />,
 };
 
-const EMPTY_STATE_MESSAGE =
-  "Technical specifications will be available after the next automatic import.";
-
-/** Grouped engineering specification layout for facade consultants. */
+/** Grouped engineering specification tables — heading is provided by the parent section. */
 export function TechnicalSpecificationsCard({
   specifications,
 }: TechnicalSpecificationsCardProps) {
-  const { sections, hasDetailedSpecs, datasheetUrl } = specifications;
-  const technicalSections = sections.filter((section) => section.id !== "general");
-  const generalSection = sections.find((section) => section.id === "general");
+  const { sections, datasheetUrl } = specifications;
+
+  if (sections.length === 0) return null;
 
   return (
-    <section aria-labelledby="technical-specs" className="scroll-mt-8">
-      <Card className="overflow-hidden p-0">
-        <div className="border-b border-white/[0.06] bg-gradient-to-r from-white/[0.04] via-white/[0.02] to-transparent px-6 py-5 sm:px-8">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-sky-400/20 bg-sky-400/10 text-sky-200">
-                <BlueprintIcon />
-              </div>
-              <div>
-                <h2
-                  id="technical-specs"
-                  className="text-lg font-semibold tracking-tight text-white sm:text-xl"
-                >
-                  Technical Specifications
-                </h2>
-                <p className="mt-1 text-sm text-white/40">
-                  Structured product data for specification writing and submittal packages.
-                </p>
-              </div>
-            </div>
-
-            {datasheetUrl && (
-              <a
-                href={datasheetUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-2.5 text-xs font-medium text-emerald-100/90 transition-colors hover:border-emerald-300/30 hover:bg-emerald-400/15"
-              >
-                <DocumentIcon />
-                Sourced from manufacturer datasheet
-              </a>
-            )}
-          </div>
+    <Card className="overflow-hidden p-0">
+      {datasheetUrl && (
+        <div className="flex justify-end border-b border-white/[0.06] bg-white/[0.02] px-6 py-3 sm:px-8">
+          <a
+            href={datasheetUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-2.5 text-xs font-medium text-emerald-100/90 transition-colors hover:border-emerald-300/30 hover:bg-emerald-400/15"
+          >
+            <DocumentIcon />
+            Sourced from manufacturer datasheet
+          </a>
         </div>
+      )}
 
-        {generalSection && (
-          <SpecSectionBlock section={generalSection} isFirst />
-        )}
-
-        {hasDetailedSpecs ? (
-          technicalSections.map((section) => (
-            <SpecSectionBlock key={section.id} section={section} />
-          ))
-        ) : (
-          <div className="border-t border-white/[0.06] px-6 py-10 sm:px-8">
-            <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-6 py-10 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-white/35">
-                <PendingIcon />
-              </div>
-              <p className="max-w-md text-sm leading-relaxed text-white/45">{EMPTY_STATE_MESSAGE}</p>
-            </div>
-          </div>
-        )}
-      </Card>
-    </section>
+      {sections.map((section, index) => (
+        <SpecSectionBlock key={section.id} section={section} isFirst={index === 0} />
+      ))}
+    </Card>
   );
 }
 
@@ -157,18 +118,6 @@ function SpecRow({ entry, index }: { entry: TechnicalSpecRow; index: number }) {
   );
 }
 
-function BlueprintIcon() {
-  return (
-    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9 4.5v15m6-15v15M4.5 9h15M4.5 15h15M4.5 4.5h15a.75.75 0 0 1 .75.75v13.5a.75.75 0 0 1-.75.75h-15a.75.75 0 0 1-.75-.75V5.25a.75.75 0 0 1 .75-.75Z"
-      />
-    </svg>
-  );
-}
-
 function DocumentIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -176,18 +125,6 @@ function DocumentIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
-      />
-    </svg>
-  );
-}
-
-function PendingIcon() {
-  return (
-    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
       />
     </svg>
   );

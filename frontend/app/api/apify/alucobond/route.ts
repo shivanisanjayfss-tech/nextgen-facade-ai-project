@@ -77,6 +77,7 @@ export async function GET(request: NextRequest) {
         skipped: 0,
         duplicates_merged: 0,
         errors: [],
+        decisions: [],
       },
     });
   }

@@ -1,26 +1,58 @@
 import { normalizeMaterialCategory } from "@/lib/material-categories";
+import {
+  resolveCanonicalManufacturer,
+  resolveProductBrand,
+} from "@/lib/manufacturer-catalog";
 import { parseMaterialSpecs } from "@/lib/material-specs";
-import { normalizeProductImageUrl } from "@/lib/product-image-url";
+import { normalizeProductImageUrl, pickBestProductImageUrl } from "@/lib/product-image-url";
 import type { MaterialRow, DatasheetRow, KnowledgeArticleRow } from "@/types/database";
 import type { Datasheet, KnowledgeArticle, Material, MaterialCategory, MaterialSpecs, MaterialSummary } from "@/types";
 
-function normalizeImageUrl(value: string | null | undefined): string | null {
-  return normalizeProductImageUrl(value);
+function resolveRowImageUrl(
+  row: Pick<MaterialRow, "image_url" | "specs">,
+): string | null {
+  const specs = parseMaterialSpecs(row.specs) as Record<string, unknown>;
+  const galleryImages = Array.isArray(specs.galleryImages)
+    ? (specs.galleryImages as string[])
+    : undefined;
+
+  return pickBestProductImageUrl(row.image_url, galleryImages);
+}
+
+function resolveRowBrand(
+  row: Pick<MaterialRow, "manufacturer" | "specs" | "source_url">,
+): string | null {
+  const specs = parseMaterialSpecs(row.specs) as Record<string, unknown>;
+  return resolveProductBrand({
+    manufacturer: row.manufacturer,
+    sourceUrl: row.source_url,
+    specs,
+  });
+}
+
+function resolveRowManufacturer(
+  row: Pick<MaterialRow, "manufacturer" | "source_url">,
+): string {
+  return resolveCanonicalManufacturer(row.manufacturer, row.source_url);
 }
 
 /** Maps a Supabase material row to the domain Material type. */
 export function mapMaterialRow(row: MaterialRow): Material {
+  const manufacturer = resolveRowManufacturer(row);
+  const brand = resolveRowBrand(row);
+
   return {
     id: row.id,
     name: row.name,
     slug: row.slug,
     category: normalizeMaterialCategory(row.category),
-    manufacturer: row.manufacturer,
+    manufacturer,
+    brand,
     description: row.description,
     specs: parseMaterialSpecs(row.specs) as MaterialSpecs,
-    imageUrl: normalizeImageUrl(row.image_url),
-    datasheetUrl: normalizeImageUrl(row.datasheet_url),
-    sourceUrl: normalizeImageUrl(row.source_url),
+    imageUrl: resolveRowImageUrl(row),
+    datasheetUrl: normalizeProductImageUrl(row.datasheet_url),
+    sourceUrl: normalizeProductImageUrl(row.source_url),
     tags: row.tags ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -36,6 +68,7 @@ export function mapMaterialSummary(row: MaterialRow): MaterialSummary {
     slug: material.slug,
     category: material.category,
     manufacturer: material.manufacturer,
+    brand: material.brand,
     description: material.description,
     imageUrl: material.imageUrl,
     tags: material.tags,

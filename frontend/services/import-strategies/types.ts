@@ -4,6 +4,7 @@ import type { ImportLimits } from "@/services/import-limits";
 /** Parameters passed when building manufacturer-specific crawl options. */
 export interface StrategyBuildParams {
   manufacturer: string;
+  brand?: string;
   websiteUrl: string;
   category: string;
   maxPages?: number;

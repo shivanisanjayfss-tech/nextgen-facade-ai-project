@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { PageHeader } from "@/components/layout/PageContainer";
+import Link from "next/link";
+import { ImportSchedulerPanel } from "@/components/admin/ImportSchedulerPanel";
 import { Button } from "@/components/ui/Button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { ErrorMessage } from "@/components/ui/ErrorMessage";
@@ -125,6 +127,25 @@ export function AdminImportForm() {
         title="Admin Import"
         description="Crawl a manufacturer website and upsert products into Supabase. Uses the same Apify importer as the Alucobond endpoint."
       />
+
+      <ImportSchedulerPanel />
+
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle>Manufacturer Registry</CardTitle>
+          <CardDescription>
+            Configure manufacturers, run imports, and manage the monthly scheduler queue from the
+            dedicated registry page.
+          </CardDescription>
+        </CardHeader>
+        <div className="px-6 pb-6">
+          <Link href="/admin/manufacturers">
+            <Button variant="outline" size="sm">
+              Open Manufacturer Registry
+            </Button>
+          </Link>
+        </div>
+      </Card>
 
       <Card className="mb-8">
         <CardHeader>

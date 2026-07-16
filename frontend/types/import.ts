@@ -8,6 +8,9 @@ export interface ImportedMaterialData {
   datasheet_url?: string;
 }
 
+/** High-level classification of an imported catalogue entry. */
+export type ProductType = "Product" | "Colour Series" | "Product Family";
+
 export type ApifyRunStatus =
   | "READY"
   | "RUNNING"
@@ -25,6 +28,7 @@ export type ApifyRunStatus =
 export interface CrawledProduct {
   productName: string;
   manufacturer: string;
+  brand?: string;
   category: string;
   fireRating?: string;
   thickness?: string;
@@ -36,7 +40,10 @@ export interface CrawledProduct {
   brochureUrl?: string;
   installationGuideUrl?: string;
   technicalManualUrl?: string;
+  maintenanceGuideUrl?: string;
   sourceUrl: string;
+  /** High-level catalogue classification persisted to specs.productType. */
+  productType?: ProductType;
   /** Alucobond page classification when detected during import. */
   pageType?: "product" | "product-family" | "colour-series";
   colourSeriesName?: string;
@@ -44,6 +51,12 @@ export interface CrawledProduct {
   finish?: string;
   surface?: string;
   availableColours?: string[];
+  /** Key product features / benefits extracted from the page (bullet lists). */
+  features?: string[];
+  /** Applications / use cases extracted from the page (bullet lists). */
+  applications?: string[];
+  /** Certifications / compliance statements extracted from the page. */
+  certifications?: string[];
   warranty?: string;
   coreMaterial?: string;
   weight?: string;
@@ -51,6 +64,8 @@ export interface CrawledProduct {
   thermalConductivity?: string;
   windLoad?: string;
   uValue?: string;
+  /** Generic technical specs extracted from the product page (canonical keys). */
+  technicalSpecs?: Record<string, string>;
   inheritSpecsFromSlug?: string;
   inheritedSpecsFrom?: string;
 }
@@ -116,7 +131,26 @@ export interface CrawlImportResult {
   persist?: MaterialPersistResult;
 }
 
-/** Counts returned after upserting crawled products into Supabase. */
+/** Per-product decision recorded during import persistence. */
+export type MaterialPersistOutcome = "imported" | "updated" | "skipped" | "failed";
+
+export interface MaterialPersistDecision {
+  productName: string;
+  sourceUrl: string;
+  slug: string;
+  outcome: MaterialPersistOutcome;
+  matchKind: "source_url" | "slug" | "manufacturer_name" | "none";
+  reason: string;
+  statusReasons: string[];
+  changedFields: Array<{
+    field: string;
+    previous: string;
+    next: string;
+  }>;
+  unchangedFields: string[];
+  errorMessage?: string;
+}
+
 export interface MaterialPersistResult {
   imported: number;
   updated: number;
@@ -127,6 +161,7 @@ export interface MaterialPersistResult {
     productName: string;
     message: string;
   }>;
+  decisions: MaterialPersistDecision[];
 }
 
 /** Result of a material import run — suitable for cron jobs and audit logs. */

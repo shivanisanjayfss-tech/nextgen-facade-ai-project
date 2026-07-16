@@ -1,17 +1,37 @@
-import { normalizeMaterialCategory } from "@/lib/material-categories";
+import {
+  CANONICAL_MANUFACTURERS,
+  PRODUCT_BRANDS,
+  resolveCanonicalManufacturer,
+  resolveProductBrand,
+} from "@/lib/manufacturer-catalog";
 import {
   ALUCOBOND_BRAND_PARENT_SLUGS,
   applyInheritedSpecs,
   isAlucobondBrandProductUrl,
   isAlucobondColourSeriesUrl,
 } from "@/lib/alucobond-colour-series";
+import {
+  analyzeMaterialChanges,
+  buildPersistReason,
+  buildStatusReasons,
+  logPersistDecision,
+} from "@/lib/material-change-detection";
 import { ServiceError } from "@/lib/errors";
+import { normalizeMaterialCategory } from "@/lib/material-categories";
+import {
+  curateGalleryImageUrls,
+  normalizeGalleryImageUrls,
+  normalizeProductImageUrl,
+  pickBestProductImageUrl,
+} from "@/lib/product-image-url";
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
+import { normalizeManufacturerForImport } from "@/services/manufacturer-registry.service";
 import { parseMaterialSpecs } from "@/lib/material-specs";
+import { resolveAlpolicSlug } from "@/lib/alpolic-products";
 import { slugify } from "@/lib/utils";
 import type { MaterialRow } from "@/types/database";
 import { DB_TABLES } from "@/types/database";
-import type { CrawledProduct, MaterialPersistResult } from "@/types/import";
+import type { CrawledProduct, MaterialPersistDecision, MaterialPersistResult, ProductType } from "@/types/import";
 
 type MaterialUpsertRow = Pick<
   MaterialRow,
@@ -25,7 +45,16 @@ type MaterialUpsertRow = Pick<
   | "datasheet_url"
   | "source_url"
   | "tags"
->;
+> & {
+  manufacturer_id?: string | null;
+};
+
+/** Registry context passed from the scheduler for id-based product linking. */
+export interface PersistCrawledProductsOptions {
+  manufacturerId: string;
+  registryName: string;
+  registryBrand?: string | null;
+}
 
 type PersistOutcome = "imported" | "updated" | "skipped";
 
@@ -58,6 +87,9 @@ function normalizeTags(tags: string[]): string[] {
 
 /** Prefer a stable URL path segment; fall back to product name. */
 function resolveSlug(product: CrawledProduct): string {
+  const fromAlpolic = resolveAlpolicSlug(product.sourceUrl);
+  if (fromAlpolic) return fromAlpolic;
+
   const fromColourSeries = product.sourceUrl.match(/\/by-colour-series\/([^/]+)/i)?.[1];
   if (fromColourSeries) return fromColourSeries.toLowerCase();
 
@@ -119,8 +151,33 @@ function buildImportTags(product: CrawledProduct): string[] {
   return normalizeTags(Array.from(tags));
 }
 
+/** Classifies a crawled product into a persisted catalogue product type. */
+function resolveProductType(product: CrawledProduct): ProductType {
+  if (product.productType) return product.productType;
+
+  switch (product.pageType) {
+    case "colour-series":
+      return "Colour Series";
+    case "product-family":
+      return "Product Family";
+    default:
+      return "Product";
+  }
+}
+
 function buildSpecs(product: CrawledProduct): Record<string, unknown> {
   const specs: Record<string, unknown> = {};
+
+  specs.productType = resolveProductType(product);
+
+  // Generic technical specs extracted from the product page. Added first so
+  // that the more targeted typed extractors below take precedence on overlap.
+  if (product.technicalSpecs) {
+    for (const [key, value] of Object.entries(product.technicalSpecs)) {
+      const normalized = normalizeText(value);
+      if (normalized) specs[key] = normalized;
+    }
+  }
 
   if (product.fireRating) specs.fireRating = normalizeText(product.fireRating);
   if (product.thickness) specs.thickness = normalizeText(product.thickness);
@@ -137,15 +194,27 @@ function buildSpecs(product: CrawledProduct): Record<string, unknown> {
 
   if (product.colourSeriesName) specs.colourSeries = normalizeText(product.colourSeriesName);
   if (product.productFamily) specs.productFamily = normalizeText(product.productFamily);
+
+  const brand = resolveProductBrand({
+    manufacturer: product.manufacturer,
+    brand: product.brand,
+    sourceUrl: product.sourceUrl,
+  });
+  if (brand) specs.brand = brand;
   if (product.finish) specs.finish = normalizeText(product.finish);
   if (product.surface) specs.surface = normalizeText(product.surface);
   if (product.availableColours?.length) specs.colours = product.availableColours;
+  if (product.features?.length) specs.features = product.features;
+  // A structured applications list (bullet points) supersedes the loose
+  // "Applications:" string captured by the generic spec extractor.
+  if (product.applications?.length) specs.applications = product.applications;
+  if (product.certifications?.length) specs.certifications = product.certifications;
   if (product.inheritedSpecsFrom) {
     specs.inheritedFrom = normalizeText(product.inheritedSpecsFrom);
   }
 
   if (product.galleryImages?.length) {
-    specs.galleryImages = product.galleryImages;
+    specs.galleryImages = normalizeGalleryImageUrls(product.galleryImages);
   }
 
   if (product.brochureUrl) specs.brochureUrl = product.brochureUrl.trim();
@@ -154,6 +223,17 @@ function buildSpecs(product: CrawledProduct): Record<string, unknown> {
   }
   if (product.technicalManualUrl) {
     specs.technicalManualUrl = product.technicalManualUrl.trim();
+  }
+  if (product.maintenanceGuideUrl) {
+    specs.maintenanceGuideUrl = product.maintenanceGuideUrl.trim();
+  }
+
+  if (product.sourceUrl) {
+    try {
+      specs.manufacturerWebsite = new URL(product.sourceUrl).origin;
+    } catch {
+      // Ignore invalid source URLs.
+    }
   }
 
   return specs;
@@ -167,45 +247,93 @@ export function mapCrawledProductToMaterialRow(
     name: normalizeProductName(product.productName),
     slug: resolveSlug(product),
     category: normalizeCategory(product.category),
-    manufacturer: normalizeText(product.manufacturer),
+    manufacturer: resolveCanonicalManufacturer(
+      normalizeText(product.manufacturer),
+      product.sourceUrl,
+    ),
     description: normalizeText(product.description ?? ""),
     specs: buildSpecs(product),
-    image_url: product.imageUrl?.trim() || null,
+    image_url: normalizeProductImageUrl(product.imageUrl?.trim() || null),
     datasheet_url: product.datasheetUrl?.trim() || null,
     source_url: product.sourceUrl.trim(),
     tags: buildImportTags(product),
   };
 }
 
-function normalizeComparable(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (Array.isArray(value)) {
-    return JSON.stringify([...value].sort());
-  }
-  if (typeof value === "object") return JSON.stringify(value);
-  return normalizeText(String(value));
-}
-
-/** Returns true when tracked import fields already match the incoming row. */
-function isUnchanged(existing: MaterialRow, incoming: MaterialUpsertRow): boolean {
-  const fields: Array<keyof MaterialUpsertRow> = [
-    "name",
-    "manufacturer",
-    "description",
-    "image_url",
-    "datasheet_url",
-    "tags",
-    "specs",
-  ];
-
-  return fields.every(
-    (field) =>
-      normalizeComparable(existing[field]) === normalizeComparable(incoming[field]),
-  );
-}
 
 function isPermissionError(message: string): boolean {
   return message.includes("permission denied");
+}
+
+function isMissingManufacturerIdColumn(message: string): boolean {
+  return message.includes("manufacturer_id") && message.includes("does not exist");
+}
+
+async function ensureManufacturerIdentity(
+  incoming: MaterialUpsertRow,
+  options?: PersistCrawledProductsOptions,
+): Promise<MaterialUpsertRow> {
+  if (incoming.manufacturer_id) {
+    return incoming;
+  }
+
+  return normalizeImportedManufacturer(incoming, options);
+}
+
+async function normalizeImportedManufacturer(
+  incoming: MaterialUpsertRow,
+  options?: PersistCrawledProductsOptions,
+): Promise<MaterialUpsertRow> {
+  const contextualized = applyRegistryImportContext(incoming, options);
+
+  const normalized = await normalizeManufacturerForImport({
+    rawName: contextualized.manufacturer,
+    website: contextualized.source_url ?? undefined,
+    manufacturerId: contextualized.manufacturer_id ?? options?.manufacturerId,
+  });
+
+  if (!normalized.manufacturerId) {
+    return contextualized;
+  }
+
+  const specs = {
+    ...(contextualized.specs as Record<string, unknown>),
+  };
+
+  if (normalized.brand) {
+    specs.brand = normalized.brand;
+  }
+
+  return {
+    ...contextualized,
+    manufacturer_id: normalized.manufacturerId,
+    manufacturer: normalized.canonicalName,
+    specs,
+  };
+}
+
+function applyRegistryImportContext(
+  incoming: MaterialUpsertRow,
+  context?: PersistCrawledProductsOptions,
+): MaterialUpsertRow {
+  if (!context?.manufacturerId) {
+    return incoming;
+  }
+
+  const specs = {
+    ...(incoming.specs as Record<string, unknown>),
+  };
+
+  if (context.registryBrand) {
+    specs.brand = context.registryBrand;
+  }
+
+  return {
+    ...incoming,
+    manufacturer_id: context.manufacturerId,
+    manufacturer: context.registryName,
+    specs,
+  };
 }
 
 function isMissingColumnError(message: string): boolean {
@@ -309,16 +437,72 @@ async function findExistingMaterial(
   return { row: null, kind: "none" };
 }
 
+function mergeSpecs(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing, ...incoming };
+
+  const existingGallery = normalizeGalleryImageUrls(
+    Array.isArray(existing.galleryImages)
+      ? (existing.galleryImages as string[])
+      : undefined,
+  );
+  const incomingGallery = normalizeGalleryImageUrls(
+    Array.isArray(incoming.galleryImages)
+      ? (incoming.galleryImages as string[])
+      : undefined,
+  );
+
+  if (incomingGallery.length > 0) {
+    merged.galleryImages = curateGalleryImageUrls([
+      ...incomingGallery,
+      ...existingGallery,
+    ]);
+  } else if (existingGallery.length > 0) {
+    merged.galleryImages = existingGallery;
+  }
+
+  const existingBrand =
+    typeof existing.brand === "string" ? existing.brand.trim() : "";
+  const incomingBrand =
+    typeof incoming.brand === "string" ? incoming.brand.trim() : "";
+
+  if (incomingBrand) {
+    merged.brand = incomingBrand;
+  } else if (existingBrand) {
+    merged.brand = existingBrand;
+  }
+
+  return merged;
+}
+
 /** Merges incoming data onto an existing row without creating a duplicate. */
 function mergeIncomingWithExisting(
   existing: MaterialRow,
   incoming: MaterialUpsertRow,
 ): MaterialUpsertRow {
+  const existingSpecs = parseMaterialSpecs(existing.specs) as Record<string, unknown>;
+  const incomingImage = normalizeProductImageUrl(incoming.image_url);
+  const existingImage = normalizeProductImageUrl(existing.image_url);
+  const galleryImages = Array.isArray(existingSpecs.galleryImages)
+    ? (existingSpecs.galleryImages as string[])
+    : undefined;
+
   return {
     ...incoming,
     slug: existing.slug || incoming.slug,
     source_url: incoming.source_url || existing.source_url,
     category: incoming.category || existing.category,
+    manufacturer:
+      incoming.manufacturer ||
+      resolveCanonicalManufacturer(existing.manufacturer, existing.source_url),
+    image_url:
+      incomingImage ??
+      pickBestProductImageUrl(existing.image_url, galleryImages) ??
+      existingImage,
+    datasheet_url: incoming.datasheet_url?.trim() || existing.datasheet_url || null,
+    specs: mergeSpecs(existingSpecs, incoming.specs as Record<string, unknown>),
   };
 }
 
@@ -327,11 +511,19 @@ async function updateExistingMaterial(
   existing: MaterialRow,
   incoming: MaterialUpsertRow,
 ): Promise<void> {
-  const payload = mergeIncomingWithExisting(existing, incoming);
-  const { error } = await supabase
+  const merged = mergeIncomingWithExisting(existing, incoming);
+  const payload = await ensureManufacturerIdentity(merged);
+  let { error } = await supabase
     .from(DB_TABLES.materials)
     .update(payload)
     .eq("id", existing.id);
+
+  if (error && isMissingManufacturerIdColumn(error.message)) {
+    ({ error } = await supabase
+      .from(DB_TABLES.materials)
+      .update(merged)
+      .eq("id", existing.id));
+  }
 
   if (error) {
     throw new ServiceError(
@@ -346,7 +538,12 @@ async function insertMaterial(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   incoming: MaterialUpsertRow,
 ): Promise<boolean> {
-  const { error } = await supabase.from(DB_TABLES.materials).insert(incoming);
+  const payload = await ensureManufacturerIdentity(incoming);
+  let { error } = await supabase.from(DB_TABLES.materials).insert(payload);
+
+  if (error && isMissingManufacturerIdColumn(error.message)) {
+    ({ error } = await supabase.from(DB_TABLES.materials).insert(incoming));
+  }
 
   if (!error) return true;
 
@@ -369,23 +566,114 @@ async function upsertMaterialRow(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   incoming: MaterialUpsertRow,
   match: MaterialMatch,
-): Promise<{ outcome: PersistOutcome; merged: boolean }> {
+): Promise<{
+  outcome: PersistOutcome;
+  merged: boolean;
+  decision: MaterialPersistDecision;
+}> {
   const existing = match.row;
   const merged = match.kind === "slug" || match.kind === "manufacturer_name";
 
   if (existing) {
     const payload = mergeIncomingWithExisting(existing, incoming);
-    if (isUnchanged(existing, payload)) {
-      return { outcome: "skipped", merged };
+    const analysis = analyzeMaterialChanges(existing, payload);
+
+    if (analysis.unchanged) {
+      const reason = buildPersistReason({
+        outcome: "skipped",
+        matchKind: match.kind,
+        analysis,
+      });
+      const statusReasons = buildStatusReasons({
+        outcome: "skipped",
+        analysis,
+      });
+      const decision: MaterialPersistDecision = {
+        productName: incoming.name,
+        sourceUrl: incoming.source_url ?? "",
+        slug: incoming.slug,
+        outcome: "skipped",
+        matchKind: match.kind,
+        reason,
+        statusReasons,
+        changedFields: [],
+        unchangedFields: analysis.unchangedFields,
+      };
+      logPersistDecision({
+        productName: decision.productName,
+        slug: decision.slug,
+        sourceUrl: decision.sourceUrl,
+        outcome: "skipped",
+        matchKind: match.kind,
+        reason,
+        statusReasons,
+        analysis,
+      });
+      return { outcome: "skipped", merged, decision };
     }
 
     await updateExistingMaterial(supabase, existing, incoming);
-    return { outcome: "updated", merged };
+    const reason = buildPersistReason({
+      outcome: "updated",
+      matchKind: match.kind,
+      analysis,
+    });
+    const statusReasons = buildStatusReasons({
+      outcome: "updated",
+      analysis,
+    });
+    const decision: MaterialPersistDecision = {
+      productName: incoming.name,
+      sourceUrl: incoming.source_url ?? "",
+      slug: incoming.slug,
+      outcome: "updated",
+      matchKind: match.kind,
+      reason,
+      statusReasons,
+      changedFields: analysis.changedFields,
+      unchangedFields: analysis.unchangedFields,
+    };
+    logPersistDecision({
+      productName: decision.productName,
+      slug: decision.slug,
+      sourceUrl: decision.sourceUrl,
+      outcome: "updated",
+      matchKind: match.kind,
+      reason,
+      statusReasons,
+      analysis,
+    });
+    return { outcome: "updated", merged, decision };
   }
 
   const inserted = await insertMaterial(supabase, incoming);
   if (inserted) {
-    return { outcome: "imported", merged: false };
+    const statusReasons = buildStatusReasons({ outcome: "imported" });
+    const reason = buildPersistReason({
+      outcome: "imported",
+      matchKind: match.kind,
+    });
+    const decision: MaterialPersistDecision = {
+      productName: incoming.name,
+      sourceUrl: incoming.source_url ?? "",
+      slug: incoming.slug,
+      outcome: "imported",
+      matchKind: "none",
+      reason,
+      statusReasons,
+      changedFields: [],
+      unchangedFields: [],
+    };
+    logPersistDecision({
+      productName: decision.productName,
+      slug: decision.slug,
+      sourceUrl: decision.sourceUrl,
+      outcome: "imported",
+      matchKind: "none",
+      reason,
+      statusReasons,
+    });
+    return { outcome: "imported", merged: false, decision };
   }
 
   const refound = await findExistingMaterial(supabase, incoming);
@@ -406,6 +694,7 @@ async function upsertMaterialRow(
  */
 export async function persistCrawledProducts(
   products: CrawledProduct[],
+  options?: PersistCrawledProductsOptions,
 ): Promise<MaterialPersistResult> {
   if (!isSupabaseConfigured()) {
     throw new ServiceError(
@@ -426,12 +715,14 @@ export async function persistCrawledProducts(
     skipped: 0,
     duplicates_merged: 0,
     errors: [],
+    decisions: [],
   };
 
-  const needsParentCatalog = products.some(
-    (product) =>
-      product.manufacturer.trim().toLowerCase() === "alucobond" &&
-      isAlucobondColourSeriesUrl(product.sourceUrl),
+  // Colour-series pages inherit engineering specs from their parent brand
+  // product. Detect them by source URL — the stored manufacturer is the
+  // canonical "3A Composites", not "alucobond".
+  const needsParentCatalog = products.some((product) =>
+    isAlucobondColourSeriesUrl(product.sourceUrl),
   );
   const parentCatalog = needsParentCatalog
     ? await loadAlucobondParentCatalog(supabase, products)
@@ -440,9 +731,16 @@ export async function persistCrawledProducts(
   for (const product of products) {
     try {
       const enriched = enrichColourSeriesProduct(product, parentCatalog);
-      const incoming = mapCrawledProductToMaterialRow(enriched);
+      const mapped = mapCrawledProductToMaterialRow(enriched);
+      const incoming = await normalizeImportedManufacturer(mapped, options);
       const match = await findExistingMaterial(supabase, incoming);
-      const { outcome, merged } = await upsertMaterialRow(supabase, incoming, match);
+      const { outcome, merged, decision } = await upsertMaterialRow(
+        supabase,
+        incoming,
+        match,
+      );
+
+      result.decisions.push(decision);
 
       if (outcome === "imported") result.imported += 1;
       else if (outcome === "updated") result.updated += 1;
@@ -459,6 +757,24 @@ export async function persistCrawledProducts(
             ? error.message
             : "Unknown import error";
 
+      const statusReasons = buildStatusReasons({
+        outcome: "failed",
+        errorMessage: message,
+      });
+
+      result.decisions.push({
+        productName: product.productName,
+        sourceUrl: product.sourceUrl,
+        slug: resolveSlug(product),
+        outcome: "failed",
+        matchKind: "none",
+        reason: statusReasons[0],
+        statusReasons,
+        changedFields: [],
+        unchangedFields: [],
+        errorMessage: message,
+      });
+
       result.errors.push({
         sourceUrl: product.sourceUrl,
         productName: product.productName,
@@ -466,6 +782,10 @@ export async function persistCrawledProducts(
       });
     }
   }
+
+  console.info(
+    `[persist] Summary — imported=${result.imported}, updated=${result.updated}, skipped=${result.skipped}, failed=${result.errors.length}, duplicates_merged=${result.duplicates_merged}`,
+  );
 
   return result;
 }

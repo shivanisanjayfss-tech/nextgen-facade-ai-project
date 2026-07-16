@@ -8,6 +8,7 @@ export type ManufacturerImportStatus =
 
 export interface ManufacturerDirectoryEntry {
   name: string;
+  slug: string;
   category: MaterialCategory;
   productCount: number;
   country?: string;
@@ -15,6 +16,7 @@ export interface ManufacturerDirectoryEntry {
   importStatus: ManufacturerImportStatus;
   lastImportDate?: string;
   productsHref: string;
+  profileHref: string;
 }
 
 export interface ManufacturerCategoryGroup {

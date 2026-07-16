@@ -19,7 +19,7 @@ export async function importAlucobondProducts(
   options: AlucobondImportOptions = {},
 ): Promise<ReturnType<typeof importManufacturerProducts>> {
   const config = alucobondStrategy.buildOptions({
-    manufacturer: "Alucobond",
+    manufacturer: "3A Composites",
     websiteUrl: "https://www.alucobond.com/en/products/",
     category: "ACP Sheet",
     maxPages: options.maxPages,

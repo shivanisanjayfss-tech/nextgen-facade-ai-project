@@ -4,6 +4,13 @@ export type {
 } from "@/services/import-strategies/types";
 
 export { GenericStrategy, genericStrategy } from "@/services/import-strategies/generic.strategy";
+export {
+  AgcGlassStrategy,
+  agcGlassStrategy,
+  AGC_GLASS_BASE,
+  AGC_GLASS_CATALOGUE_URL,
+  isAgcGlassProductPage,
+} from "@/services/import-strategies/agc-glass.strategy";
 export { AlucobondStrategy, alucobondStrategy } from "@/services/import-strategies/alucobond.strategy";
 export {
   GuardianGlassStrategy,
@@ -25,4 +32,9 @@ export {
   getSaintGobainEntryUrls,
   buildSaintGobainIncludeGlobs,
 } from "@/services/import-strategies/saint-gobain.strategy";
+export {
+  MitsubishiChemicalStrategy,
+  mitsubishiChemicalStrategy,
+  isMitsubishiAlpolicProductPage,
+} from "@/services/import-strategies/mitsubishi-chemical.strategy";
 export { resolveImportStrategy } from "@/services/import-strategies/resolve-import-strategy";

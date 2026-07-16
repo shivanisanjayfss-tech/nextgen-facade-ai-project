@@ -4,8 +4,9 @@ import { useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { CompareView } from "@/components/compare/CompareView";
 import { PageHeader } from "@/components/layout/PageContainer";
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { useCompare } from "@/hooks/useCompare";
-import { MOCK_MATERIALS } from "@/lib/mock-data";
+import { useSearch } from "@/hooks/useSearch";
 
 /** Client-side compare page content. */
 export function ComparePageContent() {
@@ -16,21 +17,21 @@ export function ComparePageContent() {
     toggleMaterial,
     compare,
     clear,
-    result,
+    result: compareResult,
     isLoading,
     error,
   } = useCompare();
 
-  const materials = MOCK_MATERIALS.map((m) => ({
-    id: m.id,
-    name: m.name,
-    slug: m.slug,
-    category: m.category,
-    manufacturer: m.manufacturer,
-    description: m.description,
-    imageUrl: m.imageUrl,
-    tags: m.tags,
-  }));
+  const {
+    result: searchResult,
+    isLoading: isLoadingMaterials,
+    error: materialsError,
+  } = useSearch({
+    initialQuery: "",
+    debounceMs: 0,
+  });
+
+  const materials = searchResult?.items ?? [];
 
   useEffect(() => {
     if (initialCompareDone.current) return;
@@ -56,10 +57,13 @@ export function ComparePageContent() {
         onToggle={toggleMaterial}
         onCompare={() => compare()}
         onClear={clear}
-        result={result}
-        isLoading={isLoading}
-        error={error}
+        result={compareResult}
+        isLoading={isLoading || isLoadingMaterials}
+        error={error ?? materialsError}
       />
+      {isLoadingMaterials && materials.length === 0 && (
+        <LoadingSpinner size="md" label="Loading products…" className="mt-6" />
+      )}
     </>
   );
 }

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, withApiHandler } from "@/lib/api-response";
-import { ServiceError } from "@/lib/errors";
+import { normalizePagination } from "@/lib/pagination";
+import { logAnalyticsEvent } from "@/services/analytics.service";
 import { searchMaterials } from "@/services/search.service";
 
 /**
@@ -14,17 +15,22 @@ export const GET = withApiHandler(async (request: NextRequest) => {
   const q = searchParams.get("q") ?? undefined;
   const category = searchParams.get("category") ?? undefined;
   const manufacturer = searchParams.get("manufacturer") ?? undefined;
-  const page = Number(searchParams.get("page") ?? "1");
-  const limit = Number(searchParams.get("limit") ?? "12");
 
-  if (Number.isNaN(page) || page < 1) {
-    throw new ServiceError("Invalid page parameter", "INVALID_REQUEST", 400);
-  }
-
-  if (Number.isNaN(limit) || limit < 1 || limit > 50) {
-    throw new ServiceError("Limit must be between 1 and 50", "INVALID_REQUEST", 400);
-  }
+  const rawPage = Number(searchParams.get("page") ?? "1");
+  const rawLimit = Number(searchParams.get("limit") ?? "12");
+  const { page, limit } = normalizePagination(rawPage, rawLimit, 50);
 
   const result = await searchMaterials({ q, category, manufacturer, page, limit });
+
+  void logAnalyticsEvent({
+    eventName: "search",
+    metadata: {
+      q: q ?? "",
+      category: category ?? "",
+      manufacturer: manufacturer ?? "",
+      resultCount: result.total,
+    },
+  });
+
   return apiSuccess(result);
 });

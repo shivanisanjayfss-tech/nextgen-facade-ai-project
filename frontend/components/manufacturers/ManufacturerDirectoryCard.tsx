@@ -76,7 +76,7 @@ interface ManufacturerDirectoryCardProps {
 export function ManufacturerDirectoryCard({ manufacturer }: ManufacturerDirectoryCardProps) {
   return (
     <Link
-      href={manufacturer.productsHref}
+      href={manufacturer.profileHref}
       className="group block rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 transition-all hover:border-white/[0.16] hover:bg-white/[0.04]"
     >
       <div className="flex items-start gap-4">

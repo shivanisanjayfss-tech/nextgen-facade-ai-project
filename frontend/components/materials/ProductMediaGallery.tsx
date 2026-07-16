@@ -1,14 +1,17 @@
 "use client";
 
-import Image from "next/image";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { ProductImage } from "@/components/materials/ProductImage";
+import { resolveProductImageUrl } from "@/lib/product-image-url";
 
 interface ProductMediaGalleryProps {
   images: string[];
   productName: string;
   category: string;
   imageUrl: string | null;
+  /** When false, only the hero image is shown (no thumbnail strip). */
+  showThumbnails?: boolean;
 }
 
 function resolveGalleryImages(images: string[], imageUrl: string | null): string[] {
@@ -16,10 +19,10 @@ function resolveGalleryImages(images: string[], imageUrl: string | null): string
   const seen = new Set<string>();
 
   const add = (url?: string | null) => {
-    const trimmed = url?.trim();
-    if (!trimmed || seen.has(trimmed)) return;
-    seen.add(trimmed);
-    resolved.push(trimmed);
+    const normalized = resolveProductImageUrl(url);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    resolved.push(normalized);
   };
 
   add(imageUrl);
@@ -29,42 +32,6 @@ function resolveGalleryImages(images: string[], imageUrl: string | null): string
   }
 
   return resolved;
-}
-
-function GalleryImage({
-  src,
-  alt,
-  className,
-  priority = false,
-}: {
-  src: string;
-  alt: string;
-  className?: string;
-  priority?: boolean;
-}) {
-  if (src.startsWith("/")) {
-    return (
-      <Image
-        src={src}
-        alt={alt}
-        fill
-        priority={priority}
-        className={className}
-        sizes="(max-width: 1024px) 100vw, 60vw"
-      />
-    );
-  }
-
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt={alt}
-      className={`absolute inset-0 h-full w-full ${className ?? "object-cover"}`}
-      loading={priority ? "eager" : "lazy"}
-      referrerPolicy="no-referrer"
-    />
-  );
 }
 
 function ProductImagePlaceholder({ category }: { category: string }) {
@@ -80,21 +47,45 @@ function ProductImagePlaceholder({ category }: { category: string }) {
   );
 }
 
-/** Interactive product image viewer with thumbnail gallery. */
+/** Interactive product image viewer with optional thumbnail gallery. */
 export function ProductMediaGallery({
   images,
   productName,
   category,
   imageUrl,
+  showThumbnails = true,
 }: ProductMediaGalleryProps) {
+  const resolvedImages = useMemo(
+    () => resolveGalleryImages(images, imageUrl),
+    [images, imageUrl],
+  );
   const [activeIndex, setActiveIndex] = useState(0);
-  const resolvedImages = resolveGalleryImages(images, imageUrl);
+  const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
 
-  if (!imageUrl) {
+  const availableImages = useMemo(
+    () => resolvedImages.filter((url) => !failedUrls.has(url)),
+    [resolvedImages, failedUrls],
+  );
+
+  const safeActiveIndex =
+    availableImages.length === 0
+      ? 0
+      : Math.min(activeIndex, availableImages.length - 1);
+
+  const activeImage = availableImages[safeActiveIndex];
+
+  const handleImageError = (url: string) => {
+    setFailedUrls((current) => {
+      const next = new Set(current);
+      next.add(url);
+      return next;
+    });
+    setActiveIndex((index) => index + 1);
+  };
+
+  if (availableImages.length === 0 || !activeImage) {
     return <ProductImagePlaceholder category={category} />;
   }
-
-  const activeImage = resolvedImages[activeIndex] ?? resolvedImages[0];
 
   return (
     <div className="bg-[#0d1424]">
@@ -104,28 +95,33 @@ export function ProductMediaGallery({
         className="group relative block aspect-[5/4] w-full cursor-zoom-in sm:aspect-[4/3]"
         aria-label={`View full image of ${productName}`}
       >
-        <GalleryImage
-          src={activeImage}
+        <ProductImage
+          key={activeImage}
+          imageUrl={activeImage}
           alt={productName}
-          priority={activeIndex === 0}
+          fallbackLabel={category}
+          fill
+          priority={safeActiveIndex === 0}
+          sizes="(max-width: 1024px) 100vw, 60vw"
           className="object-cover transition-transform duration-300 group-hover:scale-[1.01]"
+          onError={() => handleImageError(activeImage)}
         />
         <span className="absolute bottom-4 right-4 rounded-full border border-white/10 bg-black/50 px-3 py-1 text-xs text-white/70 opacity-0 transition-opacity group-hover:opacity-100">
           View full image
         </span>
       </button>
 
-      {resolvedImages.length > 1 && (
+      {showThumbnails && availableImages.length > 1 && (
         <div className="flex gap-2 overflow-x-auto border-t border-white/[0.06] p-4">
-          {resolvedImages.map((imageUrl, index) => {
-            const isActive = index === activeIndex;
+          {availableImages.map((galleryImageUrl, index) => {
+            const isActive = index === safeActiveIndex;
 
             return (
               <button
-                key={`${imageUrl}-${index}`}
+                key={`${galleryImageUrl}-${index}`}
                 type="button"
                 onClick={() => setActiveIndex(index)}
-                aria-label={`Show image ${index + 1} of ${resolvedImages.length}`}
+                aria-label={`Show image ${index + 1} of ${availableImages.length}`}
                 aria-pressed={isActive}
                 className={cn(
                   "relative h-16 w-20 shrink-0 overflow-hidden rounded-xl border transition-all sm:h-20 sm:w-24",
@@ -134,10 +130,14 @@ export function ProductMediaGallery({
                     : "border-white/10 opacity-70 hover:border-white/20 hover:opacity-100",
                 )}
               >
-                <GalleryImage
-                  src={imageUrl}
+                <ProductImage
+                  imageUrl={galleryImageUrl}
                   alt={`${productName} thumbnail ${index + 1}`}
+                  fallbackLabel={category}
+                  fill
+                  sizes="96px"
                   className="object-cover"
+                  onError={() => handleImageError(galleryImageUrl)}
                 />
               </button>
             );

@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/import/run-all",
-      "schedule": "0 6 * * *"
+      "schedule": "0 2 1 * *"
     }
   ]
 }

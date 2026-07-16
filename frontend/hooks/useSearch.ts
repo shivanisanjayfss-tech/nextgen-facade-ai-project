@@ -44,6 +44,11 @@ async function fetchAllSearchPages(
       break;
     }
 
+    const nextFrom = page * limit;
+    if (nextFrom >= total) {
+      break;
+    }
+
     page += 1;
   }
 

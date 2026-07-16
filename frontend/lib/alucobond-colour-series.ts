@@ -109,7 +109,7 @@ function extractColourSeriesLead(item: CrawlerContentItem): string | undefined {
   const markdown = item.markdown ?? "";
   const html = item.html ?? "";
 
-  const markdownMatch = markdown.match(/^#\s+[^\n]+\n+##\s+(.+?)(?:\n\n|\n#{1,3}\s)/ims);
+  const markdownMatch = markdown.match(/^#\s+[^\n]+\n+##\s+(.+?)(?:\n\n|\n#{1,3}\s)/im);
   if (markdownMatch?.[1]) {
     return markdownMatch[1].replace(/\s+/g, " ").trim();
   }

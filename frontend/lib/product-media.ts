@@ -1,3 +1,10 @@
+import {
+  curateGalleryImageUrls,
+  isExcludedGalleryImage,
+  MAX_GALLERY_IMAGES,
+  normalizeProductImageUrl,
+} from "@/lib/product-image-url";
+
 const IMAGE_EXTENSION_PATTERN = /\.(?:jpg|jpeg|png|webp|avif|gif|svg)(?:\?[^\s")'<>]*)?$/i;
 const PDF_EXTENSION_PATTERN = /\.pdf(?:\?[^\s")'<>]*)?$/i;
 
@@ -17,6 +24,7 @@ export interface ProductMediaExtract {
   brochureUrl?: string;
   installationGuideUrl?: string;
   technicalManualUrl?: string;
+  maintenanceGuideUrl?: string;
 }
 
 interface CrawlerMediaItem {
@@ -32,7 +40,12 @@ interface CrawlerMediaItem {
   };
 }
 
-type PdfKind = "datasheet" | "brochure" | "installationGuide" | "technicalManual";
+type PdfKind =
+  | "datasheet"
+  | "brochure"
+  | "installationGuide"
+  | "technicalManual"
+  | "maintenanceGuide";
 
 const PDF_KIND_PATTERNS: Record<PdfKind, RegExp[]> = {
   datasheet: [
@@ -63,6 +76,15 @@ const PDF_KIND_PATTERNS: Record<PdfKind, RegExp[]> = {
     /handbook/i,
     /user-manual/i,
     /user_manual/i,
+  ],
+  maintenanceGuide: [
+    /maintenance/i,
+    /cleaning/i,
+    /care-guide/i,
+    /care_guide/i,
+    /aftercare/i,
+    /processing-guide/i,
+    /processing_guide/i,
   ],
 };
 
@@ -136,6 +158,7 @@ function imageMatchesProductContext(url: string, pageUrl: string): boolean {
 }
 
 function scoreProductImage(url: string, pageUrl: string): number {
+  if (isExcludedGalleryImage(url)) return -1;
   if (!imageMatchesProductContext(url, pageUrl)) return -1;
 
   let score = 0;
@@ -143,10 +166,40 @@ function scoreProductImage(url: string, pageUrl: string): number {
 
   if (PRODUCT_IMAGE_HINT_PATTERN.test(lower)) score += 4;
   if (pagePathTokens(pageUrl).some((token) => lower.includes(token))) score += 3;
-  if (/(?:large|hero|main|feature|buehnen|stage)/i.test(lower)) score += 2;
-  if (/(?:thumb|thumbnail|small|icon)/i.test(lower)) score -= 2;
+  if (/(?:large|hero|main|feature|buehnen|stage|size-full)/i.test(lower)) score += 2;
+  if (/(?:^|[/_.-])insert\d/i.test(lower)) score -= 4;
 
   return score;
+}
+
+function extractSrcsetUrls(html: string, pageUrl: string): string[] {
+  const urls: string[] = [];
+
+  for (const match of html.matchAll(/srcset=["']([^"']+)["']/gi)) {
+    const parts = match[1].split(",").map((part) => part.trim());
+    let bestUrl = "";
+    let bestWidth = 0;
+
+    for (const part of parts) {
+      const [rawUrl, descriptor] = part.split(/\s+/);
+      if (!rawUrl) continue;
+
+      const width = descriptor?.endsWith("w") ? Number.parseInt(descriptor, 10) : 0;
+      const resolved = resolveAbsoluteUrl(rawUrl, pageUrl);
+      if (!resolved || !isImageUrl(resolved)) continue;
+
+      if (width >= bestWidth) {
+        bestWidth = width;
+        bestUrl = resolved;
+      } else if (!bestUrl) {
+        bestUrl = resolved;
+      }
+    }
+
+    if (bestUrl) urls.push(bestUrl);
+  }
+
+  return urls;
 }
 
 function extractRawImageUrls(item: CrawlerMediaItem, pageUrl: string): string[] {
@@ -162,10 +215,17 @@ function extractRawImageUrls(item: CrawlerMediaItem, pageUrl: string): string[] 
 
   if (fromMeta) {
     const resolved = resolveAbsoluteUrl(fromMeta, pageUrl);
-    if (resolved) urls.push(resolved);
+    if (resolved) urls.unshift(resolved);
   }
 
   const html = item.html ?? "";
+  urls.push(...extractSrcsetUrls(html, pageUrl));
+
+  for (const match of html.matchAll(/data-large_image=["']([^"']+)["']/gi)) {
+    const resolved = resolveAbsoluteUrl(match[1], pageUrl);
+    if (resolved && isImageUrl(resolved)) urls.push(resolved);
+  }
+
   for (const match of html.matchAll(
     /<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/gi,
   )) {
@@ -229,6 +289,12 @@ function extractPdfCandidates(item: CrawlerMediaItem, pageUrl: string): PdfCandi
     candidates.push({ url: match[1], context: match[2] });
   }
 
+  for (const match of source.matchAll(
+    /href=["']([^"']+\.pdf(?:\?[^"']*)?)["'][^>]*>([^<]*)</gi,
+  )) {
+    candidates.push({ url: match[1], context: match[2] });
+  }
+
   for (const match of source.matchAll(/https?:\/\/[^\s")'<>]+\.pdf(?:\?[^\s")'<>]*)?/gi)) {
     candidates.push({ url: match[0], context: "" });
   }
@@ -256,22 +322,21 @@ function pickBestPdf(
   return undefined;
 }
 
-function uniqueUrls(urls: string[]): string[] {
-  return Array.from(new Set(urls));
-}
-
 /** Extracts product media from a crawled page, excluding logos and non-product assets. */
 export function extractProductMedia(
   item: CrawlerMediaItem,
   pageUrl: string,
 ): ProductMediaExtract {
   const rawImages = extractRawImageUrls(item, pageUrl);
-  const scoredImages = uniqueUrls(rawImages)
+  const scoredImages = rawImages
     .map((url) => ({ url, score: scoreProductImage(url, pageUrl) }))
     .filter((entry) => entry.score >= 0)
-    .sort((a, b) => b.score - a.score);
+    .sort((left, right) => right.score - left.score);
 
-  const galleryImages = scoredImages.map((entry) => entry.url);
+  const galleryImages = curateGalleryImageUrls(
+    scoredImages.map((entry) => entry.url),
+    { max: MAX_GALLERY_IMAGES },
+  );
   const mainImageUrl = galleryImages[0];
 
   const pdfCandidates = extractPdfCandidates(item, pageUrl);
@@ -289,9 +354,18 @@ export function extractProductMedia(
     "technicalManual",
     assignedPdfs,
   );
+  const maintenanceGuideUrl = pickBestPdf(
+    pdfCandidates,
+    "maintenanceGuide",
+    assignedPdfs,
+  );
 
   const fallbackDatasheet = pdfCandidates.find(
-    (candidate) => !assignedPdfs.has(candidate.url),
+    (candidate) =>
+      !assignedPdfs.has(candidate.url) &&
+      !/color[\s_-]*chart|colour[\s_-]*chart/i.test(
+        `${candidate.url} ${candidate.context}`,
+      ),
   )?.url;
 
   return {
@@ -301,5 +375,6 @@ export function extractProductMedia(
     brochureUrl,
     installationGuideUrl,
     technicalManualUrl,
+    maintenanceGuideUrl,
   };
 }

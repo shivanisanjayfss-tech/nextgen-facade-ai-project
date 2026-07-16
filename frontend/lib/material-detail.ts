@@ -1,7 +1,6 @@
-import { SCHEDULED_MANUFACTURERS } from "@/config/import-manufacturers";
 import { parseMaterialSpecs } from "@/lib/material-specs";
-import { normalizeProductImageUrl } from "@/lib/product-image-url";
-import type { Material, MaterialSummary } from "@/types";
+import { normalizeGalleryImageUrls, normalizeProductImageUrl, pickBestProductImageUrl, resolveRelativeProductImageUrl } from "@/lib/product-image-url";
+import type { Material, MaterialSummary, ProductType } from "@/types";
 
 function getSpecsRecord(material: Material): Record<string, unknown> {
   return parseMaterialSpecs(material.specs);
@@ -11,7 +10,7 @@ const PRODUCT_DETAIL_DOWNLOAD_LABELS = new Set([
   "Datasheet",
   "Brochure",
   "Installation Guide",
-  "Technical Manual",
+  "Maintenance Guide",
 ]);
 
 /** Known spec keys mapped to consultancy-friendly labels. */
@@ -42,6 +41,12 @@ const SPEC_LABELS: Record<string, string> = {
   soundReduction: "Acoustic Rating",
   impactResistance: "Impact Resistance",
   solarHeatGain: "Solar Factor",
+  glassType: "Glass Type",
+  edgeFinish: "Edge Finish",
+  shgc: "SHGC",
+  emissivity: "Emissivity",
+  selectivity: "Selectivity",
+  reflectance: "Reflectance",
 };
 
 const COLOR_SPEC_KEYS = [
@@ -70,9 +75,52 @@ const DOWNLOAD_DEFINITIONS = [
     keys: ["technicalManualUrl", "technicalManual", "technical_manual"],
   },
   {
+    label: "Maintenance Guide",
+    keys: [
+      "maintenanceGuideUrl",
+      "maintenanceGuide",
+      "maintenance_guide",
+      "maintenance_guide_url",
+    ],
+  },
+  {
     label: "Certificates",
     keys: ["certificatesUrl", "certificateUrl", "certificates", "certificate"],
   },
+] as const;
+
+const REFERENCE_IMAGE_SPEC_KEYS = [
+  "referenceImages",
+  "reference_images",
+  "referencePhotos",
+  "reference_photos",
+] as const;
+
+const FEATURE_SPEC_KEYS = [
+  "features",
+  "keyFeatures",
+  "key_features",
+  "productFeatures",
+  "product_features",
+  "benefits",
+  "highlights",
+] as const;
+
+const APPLICATION_SPEC_KEYS = [
+  "applications",
+  "application",
+  "applicationAreas",
+  "application_areas",
+  "uses",
+] as const;
+
+const CERTIFICATION_SPEC_KEYS = [
+  "certifications",
+  "certification",
+  "certificates",
+  "certificate",
+  "approvals",
+  "approval",
 ] as const;
 
 const IMAGE_SPEC_KEYS = [
@@ -95,6 +143,10 @@ const MANUFACTURER_SPEC_KEYS = {
     "company_description",
   ],
 } as const;
+
+/** Product detail message when no technical specification data exists. */
+export const TECHNICAL_SPECS_UNAVAILABLE_MESSAGE =
+  "Technical specifications are not available for this product yet.";
 
 export type SpecSectionId =
   | "general"
@@ -143,7 +195,7 @@ export interface SpecEntry {
   category: SpecCategory;
 }
 
-type MaterialFieldKey = "name" | "manufacturer" | "category";
+type MaterialFieldKey = "name" | "manufacturer" | "brand" | "category";
 
 interface SpecFieldDefinition {
   label: string;
@@ -165,9 +217,6 @@ const TECHNICAL_SPEC_SECTIONS: readonly SpecSectionDefinition[] = [
     id: "general",
     title: "General",
     fields: [
-      { label: "Product Name", materialField: "name" },
-      { label: "Manufacturer", materialField: "manufacturer" },
-      { label: "Category", materialField: "category" },
       {
         label: "Product Family",
         keys: ["productFamily", "product_family", "family", "productLine", "product_line"],
@@ -181,6 +230,10 @@ const TECHNICAL_SPEC_SECTIONS: readonly SpecSectionDefinition[] = [
           "manufacturer_country",
           "country",
         ],
+      },
+      {
+        label: "Glass Type",
+        keys: ["glassType", "glass_type"],
       },
     ],
   },
@@ -276,14 +329,8 @@ const TECHNICAL_SPEC_SECTIONS: readonly SpecSectionDefinition[] = [
     id: "surface",
     title: "Surface",
     fields: [
-      { label: "Finish", keys: ["finish", "surfaceFinish", "surface_finish", "surface"] },
       { label: "Coating", keys: ["coating"] },
-      {
-        label: "Colour Series",
-        keys: ["colourSeries", "colour_series", "colorSeries", "color_series"],
-      },
-      { label: "Colour Range", keys: COLOR_SPEC_KEYS, colorList: true },
-      { label: "Gloss Level", keys: ["glossLevel", "gloss_level", "gloss"] },
+      { label: "Edge Finish", keys: ["edgeFinish", "edge_finish"] },
     ],
   },
   {
@@ -327,11 +374,31 @@ const TECHNICAL_SPEC_SECTIONS: readonly SpecSectionDefinition[] = [
   },
 ] as const;
 
-const CANONICAL_SPEC_KEYS = new Set(
-  TECHNICAL_SPEC_SECTIONS.flatMap((section) =>
+/**
+ * Appearance / finish fields shown in a dedicated section so they render for
+ * Colour Series products even when no engineering specifications exist.
+ */
+const APPEARANCE_SPEC_FIELDS: readonly SpecFieldDefinition[] = [
+  { label: "Finish", keys: ["finish", "surfaceFinish", "surface_finish"] },
+  { label: "Surface", keys: ["surface", "surfaceType", "surface_type"] },
+  {
+    label: "Colour Series",
+    keys: ["colourSeries", "colour_series", "colorSeries", "color_series"],
+  },
+  { label: "Colour Range", keys: COLOR_SPEC_KEYS, colorList: true },
+  { label: "Gloss Level", keys: ["glossLevel", "gloss_level", "gloss"] },
+] as const;
+
+const APPEARANCE_SPEC_KEYS = new Set(
+  APPEARANCE_SPEC_FIELDS.flatMap((field) => field.keys ?? []),
+);
+
+const CANONICAL_SPEC_KEYS = new Set([
+  ...TECHNICAL_SPEC_SECTIONS.flatMap((section) =>
     section.fields.flatMap((field) => field.keys ?? []),
   ),
-);
+  ...APPEARANCE_SPEC_KEYS,
+]);
 
 export interface DownloadLink {
   label: string;
@@ -366,9 +433,20 @@ const EXCLUDED_SPEC_KEYS = new Set<string>([
   "brochureUrl",
   "installationGuideUrl",
   "technicalManualUrl",
+  "maintenanceGuideUrl",
   "datasheet",
   "datasheetUrl",
   "datasheet_url",
+  "brand",
+  "colourSeries",
+  "inheritedFrom",
+  "inheritSpecsFromSlug",
+  "productType",
+  ...APPEARANCE_SPEC_KEYS,
+  ...REFERENCE_IMAGE_SPEC_KEYS,
+  ...FEATURE_SPEC_KEYS,
+  ...APPLICATION_SPEC_KEYS,
+  ...CERTIFICATION_SPEC_KEYS,
 ]);
 
 function isNonEmptyString(value: unknown): value is string {
@@ -377,11 +455,15 @@ function isNonEmptyString(value: unknown): value is string {
 
 /** Resolves the primary product image URL from mapped material fields. */
 export function resolveMaterialImageUrl(
-  material: Pick<Material, "imageUrl"> & { image_url?: string | null },
+  material: Pick<Material, "imageUrl" | "specs" | "sourceUrl"> & {
+    image_url?: string | null;
+  },
 ): string | null {
-  return (
-    normalizeProductImageUrl(material.imageUrl) ??
-    normalizeProductImageUrl(material.image_url)
+  const galleryImages = getGalleryImageUrls(material as Material);
+
+  return pickBestProductImageUrl(
+    material.imageUrl ?? material.image_url ?? null,
+    galleryImages,
   );
 }
 
@@ -396,9 +478,20 @@ function formatSpecLabel(key: string): string {
 
 function formatSpecValue(value: unknown): string | null {
   if (value === null || value === undefined) return null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
   if (Array.isArray(value)) {
     const items = value
-      .map((item) => (typeof item === "string" ? item.trim() : String(item)))
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (typeof item === "number" && Number.isFinite(item)) return String(item);
+        if (typeof item === "boolean") return item ? "Yes" : "No";
+        return String(item);
+      })
       .filter(Boolean);
     return items.length > 0 ? items.join(", ") : null;
   }
@@ -525,16 +618,6 @@ function resolveAdditionalSpecRows(
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function hasSpecsJsonData(specs: Record<string, unknown>): boolean {
-  return Object.entries(specs).some(([key, value]) => {
-    if (EXCLUDED_SPEC_KEYS.has(key)) return false;
-    if (COLOR_SPEC_KEYS.includes(key as (typeof COLOR_SPEC_KEYS)[number])) {
-      return formatColorListValue(value) !== null;
-    }
-    return formatSpecValue(value) !== null;
-  });
-}
-
 /** Builds grouped technical specification sections for the product detail page. */
 export function getTechnicalSpecifications(material: Material): TechnicalSpecifications {
   const specs = getSpecsRecord(material);
@@ -575,16 +658,147 @@ export function getTechnicalSpecifications(material: Material): TechnicalSpecifi
     }
   }
 
-  const hasDetailedSpecs =
-    hasSpecsJsonData(specs) ||
-    Boolean(material.datasheetUrl?.trim()) ||
-    sections.some((section) => section.id !== "general");
+  const hasDetailedSpecs = sections.some((section) => section.entries.length > 0);
 
   return {
     sections,
     hasDetailedSpecs,
     datasheetUrl: getDatasheetUrl(material),
   };
+}
+
+/** Resolves the catalogue product type — persisted, else inferred for legacy rows. */
+export function getProductType(material: Material): ProductType {
+  const specs = getSpecsRecord(material);
+  const raw =
+    typeof specs.productType === "string" ? specs.productType.trim().toLowerCase() : "";
+
+  if (raw === "colour series" || raw === "color series") return "Colour Series";
+  if (raw === "product family") return "Product Family";
+  if (raw === "product") return "Product";
+
+  // Backward compatibility for rows imported before productType was persisted.
+  if (isNonEmptyString(specs.colourSeries)) return "Colour Series";
+  if (isNonEmptyString(material.sourceUrl) && /colou?r-series/i.test(material.sourceUrl)) {
+    return "Colour Series";
+  }
+
+  return "Product";
+}
+
+/**
+ * Builds the appearance / finish section (Finish, Surface, Colour Series,
+ * Colour Range, Gloss). Kept separate from Technical Specifications so it
+ * renders for Colour Series products that have no engineering specs.
+ * Colour Range is omitted when colour swatches already render separately.
+ */
+export function getAppearanceSpecifications(material: Material): TechnicalSpecifications {
+  const specs = getSpecsRecord(material);
+  const hasSwatches = getMaterialColours(material).length > 0;
+  const entries: TechnicalSpecRow[] = [];
+
+  for (const field of APPEARANCE_SPEC_FIELDS) {
+    if (field.label === "Colour Range" && hasSwatches) continue;
+
+    const row = resolveSpecField(material, specs, field);
+    if (row) entries.push(row);
+  }
+
+  const sections: TechnicalSpecSection[] =
+    entries.length > 0 ? [{ id: "surface", title: "Finish & Surface", entries }] : [];
+
+  return { sections, hasDetailedSpecs: entries.length > 0 };
+}
+
+/** Returns gallery images excluding the primary hero image. */
+export function getAdditionalGalleryImages(material: Material): string[] {
+  const primary = resolveMaterialImageUrl(material);
+  const gallery = getGalleryImageUrls(material);
+
+  if (!primary) return gallery;
+  return gallery.filter((url) => url !== primary);
+}
+
+/** Returns normalized gallery image URLs from specs JSON. */
+export function getGalleryImageUrls(material: Material): string[] {
+  const specs = getSpecsRecord(material);
+  const urls: string[] = [];
+  const baseUrl = material.sourceUrl ?? null;
+
+  for (const key of IMAGE_SPEC_KEYS) {
+    const value = specs[key];
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isNonEmptyString(item)) {
+          urls.push(
+            resolveRelativeProductImageUrl(item, baseUrl) ??
+              normalizeProductImageUrl(item) ??
+              item,
+          );
+        }
+      }
+    } else if (isNonEmptyString(value)) {
+      urls.push(
+        resolveRelativeProductImageUrl(value, baseUrl) ??
+          normalizeProductImageUrl(value) ??
+          value,
+      );
+    }
+  }
+
+  return normalizeGalleryImageUrls(urls);
+}
+
+/** Returns reference / application images when stored separately from the gallery. */
+export function getReferenceImages(material: Material): string[] {
+  const specs = getSpecsRecord(material);
+  const urls: string[] = [];
+
+  for (const key of REFERENCE_IMAGE_SPEC_KEYS) {
+    const value = specs[key];
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isNonEmptyString(item)) urls.push(item);
+      }
+    } else if (isNonEmptyString(value)) {
+      urls.push(value);
+    }
+  }
+
+  return normalizeGalleryImageUrls(urls);
+}
+
+/** Returns the brochure download URL when present in specs. */
+export function getBrochureUrl(material: Material): string | null {
+  const url = findSpecUrl(getSpecsRecord(material), ["brochureUrl", "brochure", "brochure_url"]);
+  return url?.trim() ?? null;
+}
+
+/** Returns the installation guide download URL when present in specs. */
+export function getInstallationGuideUrl(material: Material): string | null {
+  const url = findSpecUrl(getSpecsRecord(material), [
+    "installationGuideUrl",
+    "installationGuide",
+    "installation_guide",
+    "installation_guide_url",
+  ]);
+  return url ? url.trim() : null;
+}
+
+/** Returns the manufacturer company website derived from Supabase data. */
+export function getManufacturerCompanyWebsite(material: Material): string | null {
+  const website = resolveManufacturerWebsite(material, getSpecsRecord(material));
+  return website ?? null;
+}
+
+/** True when the manufacturer profile has more than just the company name. */
+export function hasExtendedManufacturerProfile(profile: ManufacturerProfile): boolean {
+  return Boolean(
+    profile.website ||
+      profile.country ||
+      profile.description ||
+      (typeof profile.productCount === "number" && profile.productCount > 0),
+  );
 }
 
 /** Extracts displayable technical properties from material specs JSON. */
@@ -657,6 +871,9 @@ function collectImageUrls(
   }
 
   for (const [key, value] of Object.entries(specs)) {
+    if (REFERENCE_IMAGE_SPEC_KEYS.includes(key as (typeof REFERENCE_IMAGE_SPEC_KEYS)[number])) {
+      continue;
+    }
     if (!/image|photo|picture/i.test(key)) continue;
     if (isNonEmptyString(value)) add(value);
   }
@@ -736,6 +953,75 @@ export function getSwatchBackground(swatch: ColorSwatch): string {
   return swatch.hex ?? hashColor(swatch.name);
 }
 
+/** Returns the key product features / benefits list from specs, if present. */
+export function getMaterialFeatures(material: Material): string[] {
+  const specs = getSpecsRecord(material);
+  const features: string[] = [];
+  const seen = new Set<string>();
+
+  for (const key of FEATURE_SPEC_KEYS) {
+    const value = specs[key];
+    const items = Array.isArray(value)
+      ? value
+      : isNonEmptyString(value)
+        ? value.split(/\r?\n|•|;\s+/)
+        : [];
+
+    for (const item of items) {
+      if (!isNonEmptyString(item)) continue;
+      const text = item.trim();
+      const dedupeKey = text.toLowerCase();
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      features.push(text);
+    }
+
+    if (features.length > 0) break;
+  }
+
+  return features;
+}
+
+function collectSpecListItems(
+  specs: Record<string, unknown>,
+  keys: readonly string[],
+): string[] {
+  const items: string[] = [];
+  const seen = new Set<string>();
+
+  for (const key of keys) {
+    const value = specs[key];
+    const candidates = Array.isArray(value)
+      ? value
+      : isNonEmptyString(value)
+        ? value.split(/\r?\n|•|;\s+/)
+        : [];
+
+    for (const item of candidates) {
+      if (!isNonEmptyString(item)) continue;
+      const text = item.trim();
+      const dedupeKey = text.toLowerCase();
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      items.push(text);
+    }
+
+    if (items.length > 0) break;
+  }
+
+  return items;
+}
+
+/** Returns application areas extracted from manufacturer page content. */
+export function getMaterialApplications(material: Material): string[] {
+  return collectSpecListItems(getSpecsRecord(material), APPLICATION_SPEC_KEYS);
+}
+
+/** Returns certifications / standards extracted from manufacturer page content. */
+export function getMaterialCertifications(material: Material): string[] {
+  return collectSpecListItems(getSpecsRecord(material), CERTIFICATION_SPEC_KEYS);
+}
+
 /** Returns available download links for a material. */
 export function getMaterialDownloads(material: Material): DownloadLink[] {
   const specs = getSpecsRecord(material);
@@ -785,11 +1071,6 @@ export function getProductDetailImages(material: Material): string[] {
 function resolveManufacturerWebsite(material: Material, specs: Record<string, unknown>): string | undefined {
   const fromSpecs = findSpecUrl(specs, MANUFACTURER_SPEC_KEYS.website);
   if (fromSpecs) return fromSpecs;
-
-  const scheduled = SCHEDULED_MANUFACTURERS.find(
-    (entry) => entry.manufacturer.toLowerCase() === material.manufacturer.toLowerCase(),
-  );
-  if (scheduled) return scheduled.url;
 
   if (material.sourceUrl) {
     try {

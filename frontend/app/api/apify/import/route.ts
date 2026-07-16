@@ -87,6 +87,7 @@ export async function GET(request: NextRequest) {
         skipped: 0,
         duplicates_merged: 0,
         errors: [],
+        decisions: [],
       },
     });
   }
@@ -144,6 +145,11 @@ export async function GET(request: NextRequest) {
     if (persist.errors.length > 0) {
       notes.push(
         `${persist.errors.length} product(s) failed to import — see persist.errors for details.`,
+      );
+    }
+    if (persist.imported === 0 && persist.updated === 0 && persist.skipped > 0) {
+      notes.push(
+        `All ${persist.skipped} extracted product(s) matched existing records with no field changes — see persist.decisions for per-product reasons.`,
       );
     }
 

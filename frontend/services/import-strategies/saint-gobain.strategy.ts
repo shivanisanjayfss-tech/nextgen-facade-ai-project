@@ -18,10 +18,13 @@ export const SAINT_GOBAIN_ENTRY_URLS = [
   `${SAINT_GOBAIN_GLASS_BASE}/en-gb/products`,
 ] as const;
 
-/** Reachable UK mirror used when .com is Cloudflare-protected. */
+/**
+ * Verified UK catalogue entry points (reachable without Cloudflare challenge).
+ * Note: /glass-products redirects to a knowledge-centre article — do not use it.
+ */
 export const SAINT_GOBAIN_UK_ENTRY_URLS = [
-  `${SAINT_GOBAIN_GLASS_UK_BASE}/glass-products`,
-  `${SAINT_GOBAIN_GLASS_UK_BASE}/products`,
+  `${SAINT_GOBAIN_GLASS_UK_BASE}/our-glass-products/`,
+  `${SAINT_GOBAIN_GLASS_UK_BASE}/products/our-product-range/`,
 ] as const;
 
 const SAINT_GOBAIN_CATEGORY_SLUGS = new Set([
@@ -55,53 +58,29 @@ export function resolveSaintGobainWebsiteUrl(url: string): string {
   if (parsed.hostname.includes("saint-gobain-glass.co.uk")) {
     const segments = parsed.pathname.split("/").filter(Boolean);
     if (segments.length === 0) {
-      return `${SAINT_GOBAIN_GLASS_UK_BASE}/glass-products`;
+      return SAINT_GOBAIN_UK_ENTRY_URLS[0];
     }
     return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, "") || parsed.origin;
   }
 
-  const segments = parsed.pathname.split("/").filter(Boolean);
-  if (segments.length === 0) {
-    return SAINT_GOBAIN_GLASS_CATALOGUE_URL;
-  }
-
-  const hasProductPath = segments.some((segment) =>
-    ["product", "products", "glass-products"].includes(segment.toLowerCase()),
-  );
-
-  if (!hasProductPath) {
-    return SAINT_GOBAIN_GLASS_CATALOGUE_URL;
-  }
-
-  return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, "") || parsed.origin;
+  // saint-gobain-glass.com is Cloudflare-protected (403 challenge) — crawl the UK mirror.
+  return SAINT_GOBAIN_UK_ENTRY_URLS[0];
 }
 
-/** Crawl seeds — .com URLs first (requested), plus UK mirror when .com is blocked. */
-export function getSaintGobainEntryUrls(websiteUrl: string): string[] {
-  const hostname = new URL(websiteUrl).hostname;
-
-  if (hostname.includes("saint-gobain-glass.co.uk")) {
-    return [...SAINT_GOBAIN_UK_ENTRY_URLS];
-  }
-
-  return [...SAINT_GOBAIN_ENTRY_URLS, ...SAINT_GOBAIN_UK_ENTRY_URLS];
+/** Crawl seeds — UK mirror only; .com entry points are Cloudflare-blocked. */
+export function getSaintGobainEntryUrls(_websiteUrl: string): string[] {
+  return [...SAINT_GOBAIN_UK_ENTRY_URLS];
 }
 
 /** Include globs must cover start URLs exactly — Apify skips non-matching seeds. */
 export function buildSaintGobainIncludeGlobs(): string[] {
   return [
-    `${SAINT_GOBAIN_GLASS_BASE}/en-gb/glass-products`,
-    `${SAINT_GOBAIN_GLASS_BASE}/en-gb/glass-products/**`,
-    `${SAINT_GOBAIN_GLASS_BASE}/en-gb/products`,
-    `${SAINT_GOBAIN_GLASS_BASE}/en-gb/products/**`,
-    `${SAINT_GOBAIN_GLASS_BASE}/en-gb/**`,
-    `${SAINT_GOBAIN_GLASS_UK_BASE}/glass-products`,
-    `${SAINT_GOBAIN_GLASS_UK_BASE}/glass-products/**`,
+    `${SAINT_GOBAIN_GLASS_UK_BASE}/our-glass-products`,
+    `${SAINT_GOBAIN_GLASS_UK_BASE}/our-glass-products/**`,
+    `${SAINT_GOBAIN_GLASS_UK_BASE}/our-glassolutions-product-range/**`,
     `${SAINT_GOBAIN_GLASS_UK_BASE}/products`,
     `${SAINT_GOBAIN_GLASS_UK_BASE}/products/**`,
     `${SAINT_GOBAIN_GLASS_UK_BASE}/product/**`,
-    `${SAINT_GOBAIN_GLASS_UK_BASE}/**`,
-    "https://in.saint-gobain-glass.com/product/**",
   ];
 }
 
@@ -175,8 +154,9 @@ export class SaintGobainStrategy implements ManufacturerImportStrategy {
       entryUrls: getSaintGobainEntryUrls(websiteUrl),
       skipHomepageDiscovery: true,
       maxCrawlDepth: 3,
-      crawlerType: "playwright:adaptive",
-      proxyGroups: ["RESIDENTIAL"],
+      // UK mirror serves product links in static HTML; cheerio avoids Playwright
+      // navigation timeouts on Cloudflare-blocked .com redirects.
+      crawlerType: "cheerio",
       maxPages: params.maxPages ?? limits.maxPages,
       limit: params.limit ?? limits.limit,
       timeoutMs: params.timeoutMs ?? limits.timeout,

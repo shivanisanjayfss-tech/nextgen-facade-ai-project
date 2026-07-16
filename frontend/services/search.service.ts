@@ -1,16 +1,28 @@
-import { ServiceError } from "@/lib/errors";
+import { isCatalogueDemoDuplicate, resolveProductBrand } from "@/lib/manufacturer-catalog";
 import { mapMaterialSummary } from "@/lib/mappers";
+import {
+  filterActiveMaterialRows,
+  hasMaterialsIsActiveColumn,
+} from "@/lib/materials-schema";
+import { raiseSupabaseError } from "@/lib/supabase-errors";
 import {
   resolveCategoryDbValues,
   resolveCategoryFilter,
   resolveSearchQueryCategory,
 } from "@/lib/material-categories";
+import {
+  clampRangeEnd,
+  isRangeBeyondTotal,
+  isRangeNotSatisfiableError,
+  normalizePagination,
+} from "@/lib/pagination";
 import { MOCK_MATERIALS } from "@/lib/mock-data";
 import { getSupabaseServer } from "@/lib/supabase";
 import type { MaterialRow } from "@/types/database";
 import { DB_TABLES } from "@/types/database";
 import type { MaterialCategory } from "@/types/material";
 import type { MaterialSummary, SearchParams, SearchResult } from "@/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 /** Escapes special characters for PostgREST ilike patterns. */
 function escapeIlikePattern(value: string): string {
@@ -23,6 +35,7 @@ function materialMatchesTextQuery(material: MaterialSummary, query: string): boo
   return (
     material.name.toLowerCase().includes(needle) ||
     material.manufacturer.toLowerCase().includes(needle) ||
+    (material.brand?.toLowerCase().includes(needle) ?? false) ||
     material.category.toLowerCase().includes(needle) ||
     material.description.toLowerCase().includes(needle) ||
     material.slug.toLowerCase().includes(needle) ||
@@ -71,12 +84,19 @@ function filterMaterials(
 }
 
 function toSummaryFromMock(m: (typeof MOCK_MATERIALS)[number]): MaterialSummary {
+  const brand = resolveProductBrand({
+    manufacturer: m.manufacturer,
+    specs: m.specs as Record<string, unknown>,
+    sourceUrl: m.sourceUrl,
+  });
+
   return {
     id: m.id,
     name: m.name,
     slug: m.slug,
     category: m.category,
     manufacturer: m.manufacturer,
+    brand,
     description: m.description,
     imageUrl: m.imageUrl,
     tags: m.tags,
@@ -94,15 +114,75 @@ function buildTextSearchOrClause(query: string): string {
   ].join(",");
 }
 
+type MaterialsSelectQuery = ReturnType<
+  ReturnType<SupabaseClient["from"]>["select"]
+>;
+
+function applySearchFilters(
+  dbQuery: MaterialsSelectQuery,
+  params: {
+    query: string;
+    explicitCategory?: MaterialCategory;
+    categoryFromQuery?: MaterialCategory;
+    manufacturer?: string;
+  },
+) {
+  let query = dbQuery;
+
+  if (params.explicitCategory) {
+    const dbCategories = resolveCategoryDbValues(params.explicitCategory)!;
+    query = query.in("category", dbCategories);
+  } else if (params.categoryFromQuery) {
+    const dbCategories = resolveCategoryDbValues(params.categoryFromQuery)!;
+    query = query.in("category", dbCategories);
+  } else if (params.query) {
+    query = query.or(buildTextSearchOrClause(params.query));
+  }
+
+  if (params.manufacturer) {
+    query = query.ilike(
+      "manufacturer",
+      `%${escapeIlikePattern(params.manufacturer)}%`,
+    );
+  }
+
+  return query;
+}
+
+function mapSearchRows(rows: MaterialRow[]): {
+  items: MaterialSummary[];
+  hiddenDemoCount: number;
+} {
+  const activeRows = filterActiveMaterialRows(rows);
+  const items = activeRows
+    .map(mapMaterialSummary)
+    .filter((item) => !isCatalogueDemoDuplicate(item));
+
+  return {
+    items,
+    hiddenDemoCount: activeRows.length - items.length,
+  };
+}
+
+function emptySearchResult(
+  page: number,
+  limit: number,
+  query: string,
+  total = 0,
+): SearchResult {
+  return {
+    items: [],
+    total,
+    page,
+    limit,
+    query,
+  };
+}
+
 /** Searches materials with optional filters and pagination. */
 export async function searchMaterials(params: SearchParams): Promise<SearchResult> {
-  const page = params.page ?? 1;
-  const limit = Math.min(params.limit ?? 12, 50);
+  const { page, limit, from, to } = normalizePagination(params.page, params.limit, 50);
   const query = params.q?.trim() ?? "";
-
-  if (page < 1) {
-    throw new ServiceError("Page must be >= 1", "INVALID_REQUEST", 400);
-  }
 
   const categoryFromQuery = query ? resolveSearchQueryCategory(query) : undefined;
   const explicitCategory = params.category
@@ -112,49 +192,78 @@ export async function searchMaterials(params: SearchParams): Promise<SearchResul
   const supabase = getSupabaseServer();
 
   if (supabase) {
-    let dbQuery = supabase
+    const useActiveColumn = await hasMaterialsIsActiveColumn(supabase);
+    const filterParams = {
+      query,
+      explicitCategory: explicitCategory as MaterialCategory | undefined,
+      categoryFromQuery,
+      manufacturer: params.manufacturer,
+    };
+
+    let countBuilder = supabase
       .from(DB_TABLES.materials)
-      .select("*", { count: "exact" });
+      .select("*", { count: "exact", head: true });
 
-    if (explicitCategory) {
-      const dbCategories = resolveCategoryDbValues(explicitCategory)!;
-      dbQuery = dbQuery.in("category", dbCategories);
-    } else if (categoryFromQuery) {
-      const dbCategories = resolveCategoryDbValues(categoryFromQuery)!;
-      dbQuery = dbQuery.in("category", dbCategories);
-    } else if (query) {
-      dbQuery = dbQuery.or(buildTextSearchOrClause(query));
+    if (useActiveColumn) {
+      countBuilder = countBuilder.eq("is_active", true);
     }
 
-    if (params.manufacturer) {
-      dbQuery = dbQuery.ilike("manufacturer", `%${escapeIlikePattern(params.manufacturer)}%`);
+    const { count, error: countError } = await applySearchFilters(
+      countBuilder,
+      filterParams,
+    );
+
+    if (countError && !isRangeNotSatisfiableError(countError)) {
+      raiseSupabaseError(countError, "searchMaterials(count)");
     }
 
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-    const { data, error, count } = await dbQuery
+    const total = count ?? 0;
+
+    if (isRangeBeyondTotal(from, total)) {
+      return emptySearchResult(page, limit, query, total);
+    }
+
+    const rangeEnd = clampRangeEnd(from, to, total);
+    let dataBuilder = supabase.from(DB_TABLES.materials).select("*");
+
+    if (useActiveColumn) {
+      dataBuilder = dataBuilder.eq("is_active", true);
+    }
+
+    const { data, error } = await applySearchFilters(dataBuilder, filterParams)
       .order("name", { ascending: true })
-      .range(from, to);
+      .range(from, rangeEnd);
 
     if (error) {
-      throw new ServiceError(error.message, "DATABASE_ERROR", 500);
+      if (isRangeNotSatisfiableError(error)) {
+        return emptySearchResult(page, limit, query, total);
+      }
+
+      raiseSupabaseError(error, "searchMaterials(data)");
     }
 
+    const { items, hiddenDemoCount } = mapSearchRows((data ?? []) as MaterialRow[]);
+
     return {
-      items: (data as MaterialRow[]).map(mapMaterialSummary),
-      total: count ?? data?.length ?? 0,
+      items,
+      total: Math.max(0, total - hiddenDemoCount),
       page,
       limit,
       query,
     };
   }
 
-  const all = MOCK_MATERIALS.map(toSummaryFromMock);
-  const filtered = filterMaterials(all, params);
-  const start = (page - 1) * limit;
+  const all = MOCK_MATERIALS.map(toSummaryFromMock).filter(
+    (item) => !isCatalogueDemoDuplicate(item),
+  );
+  const filtered = filterMaterials(all, { ...params, page, limit });
+
+  if (isRangeBeyondTotal(from, filtered.length)) {
+    return emptySearchResult(page, limit, query, filtered.length);
+  }
 
   return {
-    items: filtered.slice(start, start + limit),
+    items: filtered.slice(from, from + limit),
     total: filtered.length,
     page,
     limit,

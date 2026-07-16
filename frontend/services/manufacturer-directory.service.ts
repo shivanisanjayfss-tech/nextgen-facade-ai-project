@@ -1,3 +1,14 @@
+import {
+  isCatalogueDemoDuplicate,
+  manufacturerCatalogueKey,
+  resolveCanonicalManufacturer,
+} from "@/lib/manufacturer-catalog";
+import { manufacturerSlug } from "@/lib/manufacturer-slug";
+import {
+  isRangeBeyondTotal,
+  isRangeNotSatisfiableError,
+  normalizePagination,
+} from "@/lib/pagination";
 import { normalizeMaterialCategory, MATERIAL_CATEGORIES } from "@/lib/material-categories";
 import { MOCK_MATERIALS } from "@/lib/mock-data";
 import { getSupabaseServer } from "@/lib/supabase";
@@ -28,10 +39,12 @@ const LOGO_SPEC_KEYS = [
 ] as const;
 
 interface MaterialAggregateRow {
+  slug: string;
   category: string;
   manufacturer: string;
   specs: Record<string, unknown>;
   image_url: string | null;
+  source_url: string | null;
   updated_at: string;
 }
 
@@ -64,15 +77,17 @@ function buildProductsHref(category: MaterialCategory, manufacturer: string): st
 }
 
 function normalizeManufacturerKey(name: string): string {
-  return name.trim().toLowerCase();
+  return manufacturerCatalogueKey(name);
 }
 
 function aggregateManufacturers(rows: MaterialAggregateRow[]): ManufacturerAggregate[] {
   const map = new Map<string, ManufacturerAggregate>();
 
   for (const row of rows) {
+    if (isCatalogueDemoDuplicate(row)) continue;
+
     const category = normalizeMaterialCategory(row.category);
-    const name = row.manufacturer.trim();
+    const name = resolveCanonicalManufacturer(row.manufacturer);
     const key = `${category}::${normalizeManufacturerKey(name)}`;
     const specs = row.specs ?? {};
 
@@ -180,29 +195,51 @@ async function fetchAllMaterialAggregateRows(): Promise<MaterialAggregateRow[]> 
   const supabase = getSupabaseServer();
   if (!supabase) return [];
 
+  const { count, error: countError } = await supabase
+    .from(DB_TABLES.materials)
+    .select("*", { count: "exact", head: true });
+
+  if (countError && !isRangeNotSatisfiableError(countError)) {
+    throw new Error(
+      `Failed to count materials for manufacturer directory: ${countError.message}`,
+    );
+  }
+
+  const total = count ?? 0;
+  if (total === 0) return [];
+
   const pageSize = 100;
   const rows: MaterialAggregateRow[] = [];
-  let page = 0;
+  let page = 1;
 
   while (true) {
-    const from = page * pageSize;
-    const to = from + pageSize - 1;
+    const { from, to } = normalizePagination(page, pageSize, pageSize);
+
+    if (isRangeBeyondTotal(from, total)) {
+      break;
+    }
 
     const { data, error } = await supabase
       .from(DB_TABLES.materials)
-      .select("category, manufacturer, specs, image_url, updated_at")
+      .select("slug, category, manufacturer, specs, image_url, source_url, updated_at")
       .order("manufacturer", { ascending: true })
       .range(from, to);
 
     if (error) {
-      throw new Error(`Failed to load materials for manufacturer directory: ${error.message}`);
+      if (isRangeNotSatisfiableError(error)) {
+        break;
+      }
+
+      throw new Error(
+        `Failed to load materials for manufacturer directory: ${error.message}`,
+      );
     }
 
     if (!data?.length) break;
 
     rows.push(...(data as MaterialAggregateRow[]));
 
-    if (data.length < pageSize) break;
+    if (data.length < pageSize || rows.length >= total) break;
     page += 1;
   }
 
@@ -210,13 +247,17 @@ async function fetchAllMaterialAggregateRows(): Promise<MaterialAggregateRow[]> 
 }
 
 function mockMaterialAggregateRows(): MaterialAggregateRow[] {
-  return MOCK_MATERIALS.map((material) => ({
-    category: material.category,
-    manufacturer: material.manufacturer,
-    specs: material.specs as Record<string, unknown>,
-    image_url: material.imageUrl ?? null,
-    updated_at: material.updatedAt,
-  }));
+  return MOCK_MATERIALS.filter((material) => !isCatalogueDemoDuplicate(material)).map(
+    (material) => ({
+      slug: material.slug,
+      category: material.category,
+      manufacturer: material.manufacturer,
+      specs: material.specs as Record<string, unknown>,
+      image_url: material.imageUrl ?? null,
+      source_url: material.sourceUrl ?? null,
+      updated_at: material.updatedAt,
+    }),
+  );
 }
 
 /** Builds the manufacturer directory dynamically from imported materials. */
@@ -235,6 +276,7 @@ export async function getManufacturerDirectory(): Promise<ManufacturerDirectoryR
 
     return {
       name: aggregate.name,
+      slug: manufacturerSlug(aggregate.name),
       category: aggregate.category,
       productCount: aggregate.productCount,
       country: aggregate.country,
@@ -242,6 +284,7 @@ export async function getManufacturerDirectory(): Promise<ManufacturerDirectoryR
       importStatus: importMeta.status,
       lastImportDate: importMeta.lastImportDate ?? aggregate.latestProductUpdate,
       productsHref: buildProductsHref(aggregate.category, aggregate.name),
+      profileHref: `/manufacturers/${manufacturerSlug(aggregate.name)}`,
     };
   });
 

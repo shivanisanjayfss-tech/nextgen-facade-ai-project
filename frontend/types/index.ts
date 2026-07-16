@@ -11,6 +11,7 @@ export type {
   ImportedMaterialData,
   MaterialImportResult,
   MaterialPersistResult,
+  ProductType,
 } from "./import";
 export type { MaterialRow, DatasheetRow, KnowledgeArticleRow } from "./database";
 export { DB_TABLES } from "./database";
