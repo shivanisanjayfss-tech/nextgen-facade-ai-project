@@ -38,7 +38,11 @@ export default async function MaterialPage({ params }: MaterialPageProps) {
   try {
     [relatedProducts, manufacturerProductCount] = await Promise.all([
       getRelatedMaterials(material),
-      getManufacturerProductCount(material.manufacturer, material.sourceUrl),
+      getManufacturerProductCount(
+        material.manufacturer,
+        material.sourceUrl,
+        material.manufacturerId,
+      ),
     ]);
   } catch (error) {
     console.error("[material-page] Failed to load related products:", error);

@@ -1,60 +1,13 @@
-/** Canonical company name for catalogue grouping. */
-export const CANONICAL_MANUFACTURERS = {
-  THREE_A_COMPOSITES: "3A Composites",
-  GUARDIAN_GLASS: "Guardian Glass",
-  AGC_GLASS: "AGC Glass",
-} as const;
-
-/** Product brands owned by a manufacturer company. */
+/** Product brands used for display and import enrichment (not manufacturer identity). */
 export const PRODUCT_BRANDS = {
   ALUCOBOND: "ALUCOBOND",
   ALPOLIC: "ALPOLIC",
 } as const;
 
-const MANUFACTURER_ALIASES: Record<string, string> = {
-  alucobond: CANONICAL_MANUFACTURERS.THREE_A_COMPOSITES,
-  "3a composites": CANONICAL_MANUFACTURERS.THREE_A_COMPOSITES,
-  "3a-composites": CANONICAL_MANUFACTURERS.THREE_A_COMPOSITES,
-};
-
 const SOURCE_BRAND_HINTS: Array<{ pattern: RegExp; brand: string }> = [
   { pattern: /alucobond\.com/i, brand: PRODUCT_BRANDS.ALUCOBOND },
   { pattern: /alpolic\.com/i, brand: PRODUCT_BRANDS.ALPOLIC },
 ];
-
-const MANUFACTURER_DEFAULT_BRANDS: Record<string, string> = {
-  [CANONICAL_MANUFACTURERS.THREE_A_COMPOSITES.toLowerCase()]:
-    PRODUCT_BRANDS.ALUCOBOND,
-  "mitsubishi chemical": PRODUCT_BRANDS.ALPOLIC,
-};
-
-function normalizeKey(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-/** Resolves legacy/import manufacturer labels to a single catalogue company name. */
-export function resolveCanonicalManufacturer(
-  manufacturer: string,
-  sourceUrl?: string | null,
-): string {
-  const trimmed = manufacturer.trim();
-  if (!trimmed) return trimmed;
-
-  const alias = MANUFACTURER_ALIASES[normalizeKey(trimmed)];
-  if (alias) return alias;
-
-  if (sourceUrl) {
-    for (const { pattern, brand } of SOURCE_BRAND_HINTS) {
-      if (pattern.test(sourceUrl)) {
-        if (brand === PRODUCT_BRANDS.ALUCOBOND) {
-          return CANONICAL_MANUFACTURERS.THREE_A_COMPOSITES;
-        }
-      }
-    }
-  }
-
-  return trimmed;
-}
 
 /** Resolves the product brand for a material row or import payload. */
 export function resolveProductBrand(options: {
@@ -78,46 +31,15 @@ export function resolveProductBrand(options: {
     }
   }
 
-  const canonical = resolveCanonicalManufacturer(options.manufacturer, options.sourceUrl);
-  return MANUFACTURER_DEFAULT_BRANDS[normalizeKey(canonical)] ?? null;
+  return null;
 }
 
-/** Returns true when the manufacturer or source URL belongs to Alucobond imports. */
+/** Returns true when the source URL belongs to an Alucobond product page. */
 export function isAlucobondCatalogueEntry(
-  manufacturer: string,
+  _manufacturer: string,
   sourceUrl?: string | null,
 ): boolean {
-  if (normalizeKey(manufacturer) === "alucobond") return true;
-  if (resolveCanonicalManufacturer(manufacturer, sourceUrl) === CANONICAL_MANUFACTURERS.THREE_A_COMPOSITES) {
-    return Boolean(sourceUrl && /alucobond\.com/i.test(sourceUrl));
-  }
   return /alucobond\.com/i.test(sourceUrl ?? "");
-}
-
-/** Stable key for grouping manufacturers in browse views. */
-export function manufacturerCatalogueKey(manufacturer: string, sourceUrl?: string | null): string {
-  return normalizeKey(resolveCanonicalManufacturer(manufacturer, sourceUrl));
-}
-
-/** Manufacturer labels that should match the same catalogue company in DB queries. */
-export function getManufacturerCatalogueMatchNames(
-  manufacturer: string,
-  sourceUrl?: string | null,
-): string[] {
-  const canonical = resolveCanonicalManufacturer(manufacturer, sourceUrl);
-  const names = new Set<string>([canonical]);
-
-  for (const [alias, target] of Object.entries(MANUFACTURER_ALIASES)) {
-    if (target === canonical) {
-      names.add(alias.replace(/\b\w/g, (char) => char.toUpperCase()));
-    }
-  }
-
-  if (canonical === CANONICAL_MANUFACTURERS.THREE_A_COMPOSITES) {
-    names.add("Alucobond");
-  }
-
-  return Array.from(names);
 }
 
 const CATALOGUE_DEMO_DUPLICATE_SLUGS = new Set(["alucobond-plus-a2"]);

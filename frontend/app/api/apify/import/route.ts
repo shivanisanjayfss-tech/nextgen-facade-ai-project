@@ -9,6 +9,7 @@ import {
 import { resolveImportStrategy } from "@/services/import-strategies";
 import { resolveImportLimits } from "@/services/import-limits";
 import { persistCrawledProducts } from "@/services/material-import.service";
+import { resolveImportPersistContext } from "@/services/manufacturer-identity.service";
 import type { CrawlImportResult, ImportSummary } from "@/types/import";
 
 function buildImportSummary(
@@ -128,9 +129,14 @@ export async function GET(request: NextRequest) {
 
     const result = await importManufacturerProducts(importOptions);
 
+    const persistContext = await resolveImportPersistContext({
+      manufacturer,
+      websiteUrl,
+    });
+
     let persist;
     try {
-      persist = await persistCrawledProducts(result.products);
+      persist = await persistCrawledProducts(result.products, persistContext);
     } catch (error) {
       if (isServiceError(error)) {
         return apiError(error.message, error.status, error.code);

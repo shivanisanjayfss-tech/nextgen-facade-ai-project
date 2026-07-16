@@ -131,6 +131,13 @@ export interface CrawlImportResult {
   persist?: MaterialPersistResult;
 }
 
+/** Registry context passed from import routes for id-based product linking. */
+export interface PersistCrawledProductsOptions {
+  manufacturerId?: string;
+  registryName?: string;
+  registryBrand?: string | null;
+}
+
 /** Per-product decision recorded during import persistence. */
 export type MaterialPersistOutcome = "imported" | "updated" | "skipped" | "failed";
 
@@ -139,7 +146,7 @@ export interface MaterialPersistDecision {
   sourceUrl: string;
   slug: string;
   outcome: MaterialPersistOutcome;
-  matchKind: "source_url" | "slug" | "manufacturer_name" | "none";
+  matchKind: "source_url" | "slug" | "manufacturer_id" | "none";
   reason: string;
   statusReasons: string[];
   changedFields: Array<{

@@ -1,7 +1,3 @@
-import {
-  getManufacturerCatalogueMatchNames,
-  resolveCanonicalManufacturer,
-} from "@/lib/manufacturer-catalog";
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
 import type { MaterialRow } from "@/types/database";
 import { DB_TABLES } from "@/types/database";
@@ -17,13 +13,13 @@ export interface ManufacturerLifecycleResult {
 
 /**
  * Marks products not seen in the latest crawl as inactive and reactivates seen ones.
- * Only affects rows with a source_url for the given manufacturer catalogue.
+ * Only affects rows linked to the given manufacturer_id.
  */
 export async function syncManufacturerProductLifecycle(
-  manufacturer: string,
+  manufacturerId: string,
   seenSourceUrls: string[],
 ): Promise<ManufacturerLifecycleResult> {
-  if (!isSupabaseConfigured()) {
+  if (!isSupabaseConfigured() || !manufacturerId.trim()) {
     return { reactivated: 0, deactivated: 0 };
   }
 
@@ -32,8 +28,6 @@ export async function syncManufacturerProductLifecycle(
     return { reactivated: 0, deactivated: 0 };
   }
 
-  const matchNames = getManufacturerCatalogueMatchNames(manufacturer);
-  const canonical = resolveCanonicalManufacturer(manufacturer);
   const seen = new Set(
     seenSourceUrls
       .map((url) => url.trim())
@@ -43,13 +37,13 @@ export async function syncManufacturerProductLifecycle(
 
   const { data, error } = await supabase
     .from(DB_TABLES.materials)
-    .select("id, source_url, manufacturer, is_active")
-    .in("manufacturer", matchNames)
+    .select("id, source_url, is_active")
+    .eq("manufacturer_id", manufacturerId)
     .not("source_url", "is", null);
 
   if (error) {
     console.error(
-      `[material-lifecycle] Failed to load materials for ${manufacturer}:`,
+      `[material-lifecycle] Failed to load materials for ${manufacturerId}:`,
       error.message,
     );
     return { reactivated: 0, deactivated: 0 };
@@ -59,18 +53,7 @@ export async function syncManufacturerProductLifecycle(
   let deactivated = 0;
 
   for (const row of data ?? []) {
-    const record = row as Pick<
-      MaterialRow,
-      "id" | "source_url" | "manufacturer" | "is_active"
-    >;
-
-    if (
-      resolveCanonicalManufacturer(record.manufacturer, record.source_url) !==
-      canonical
-    ) {
-      continue;
-    }
-
+    const record = row as Pick<MaterialRow, "id" | "source_url" | "is_active">;
     const sourceUrl = record.source_url?.trim();
     if (!sourceUrl) continue;
 
@@ -98,7 +81,7 @@ export async function syncManufacturerProductLifecycle(
 
   if (deactivated > 0 || reactivated > 0) {
     console.info(
-      `[material-lifecycle] ${manufacturer}: reactivated=${reactivated}, deactivated=${deactivated}`,
+      `[material-lifecycle] ${manufacturerId}: reactivated=${reactivated}, deactivated=${deactivated}`,
     );
   }
 

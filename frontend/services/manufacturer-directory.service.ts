@@ -1,8 +1,5 @@
-import {
-  isCatalogueDemoDuplicate,
-  manufacturerCatalogueKey,
-  resolveCanonicalManufacturer,
-} from "@/lib/manufacturer-catalog";
+import { isCatalogueDemoDuplicate } from "@/lib/manufacturer-catalog";
+import { manufacturerIdentityKey } from "@/lib/manufacturer-identity";
 import { manufacturerSlug } from "@/lib/manufacturer-slug";
 import {
   isRangeBeyondTotal,
@@ -42,6 +39,7 @@ interface MaterialAggregateRow {
   slug: string;
   category: string;
   manufacturer: string;
+  manufacturer_id: string | null;
   specs: Record<string, unknown>;
   image_url: string | null;
   source_url: string | null;
@@ -76,8 +74,11 @@ function buildProductsHref(category: MaterialCategory, manufacturer: string): st
   return `/search?${params.toString()}`;
 }
 
-function normalizeManufacturerKey(name: string): string {
-  return manufacturerCatalogueKey(name);
+function normalizeManufacturerKey(
+  manufacturer: string,
+  manufacturerId?: string | null,
+): string {
+  return manufacturerIdentityKey({ manufacturerId, manufacturer });
 }
 
 function aggregateManufacturers(rows: MaterialAggregateRow[]): ManufacturerAggregate[] {
@@ -87,8 +88,8 @@ function aggregateManufacturers(rows: MaterialAggregateRow[]): ManufacturerAggre
     if (isCatalogueDemoDuplicate(row)) continue;
 
     const category = normalizeMaterialCategory(row.category);
-    const name = resolveCanonicalManufacturer(row.manufacturer);
-    const key = `${category}::${normalizeManufacturerKey(name)}`;
+    const name = row.manufacturer.trim();
+    const key = `${category}::${normalizeManufacturerKey(name, row.manufacturer_id)}`;
     const specs = row.specs ?? {};
 
     const existing = map.get(key);
@@ -221,7 +222,7 @@ async function fetchAllMaterialAggregateRows(): Promise<MaterialAggregateRow[]> 
 
     const { data, error } = await supabase
       .from(DB_TABLES.materials)
-      .select("slug, category, manufacturer, specs, image_url, source_url, updated_at")
+      .select("slug, category, manufacturer, manufacturer_id, specs, image_url, source_url, updated_at")
       .order("manufacturer", { ascending: true })
       .range(from, to);
 
@@ -252,6 +253,7 @@ function mockMaterialAggregateRows(): MaterialAggregateRow[] {
       slug: material.slug,
       category: material.category,
       manufacturer: material.manufacturer,
+      manufacturer_id: null,
       specs: material.specs as Record<string, unknown>,
       image_url: material.imageUrl ?? null,
       source_url: material.sourceUrl ?? null,

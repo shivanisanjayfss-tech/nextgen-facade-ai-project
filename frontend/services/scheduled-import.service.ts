@@ -17,6 +17,9 @@ import { IMPORT_MODE_LIMITS } from "@/services/import-limits";
 import { syncManufacturerProductLifecycle } from "@/services/material-lifecycle.service";
 import { importManufacturerProducts } from "@/services/manufacturer-import.service";
 import { persistCrawledProducts } from "@/services/material-import.service";
+import {
+  buildImportPersistContextFromRegistry,
+} from "@/services/manufacturer-identity.service";
 import type {
   ImportHistoryStatus,
   ManufacturerImportReport,
@@ -77,11 +80,14 @@ async function runManufacturerImportAttempt(
   });
 
   const crawlResult = await importManufacturerProducts(importOptions);
-  const persist = await persistCrawledProducts(crawlResult.products, {
-    manufacturerId: entry.id,
-    registryName: entry.manufacturer,
-    registryBrand: entry.brand ?? null,
-  });
+  const persist = await persistCrawledProducts(
+    crawlResult.products,
+    buildImportPersistContextFromRegistry({
+      id: entry.id,
+      name: entry.manufacturer,
+      brand: entry.brand ?? null,
+    }),
+  );
 
   console.info(
     `[scheduled-import] ${entry.manufacturer}: extracted=${crawlResult.product_count}, imported=${persist.imported}, updated=${persist.updated}, skipped=${persist.skipped}, failed=${persist.errors.length}`,
@@ -99,7 +105,7 @@ async function runManufacturerImportAttempt(
 
   if (syncProductLifecycle) {
     await syncManufacturerProductLifecycle(
-      entry.manufacturer,
+      entry.id,
       crawlResult.products
         .map((product) => product.sourceUrl)
         .filter((url): url is string => Boolean(url?.trim())),

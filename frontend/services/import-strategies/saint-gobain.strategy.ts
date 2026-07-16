@@ -146,7 +146,7 @@ export class SaintGobainStrategy implements ManufacturerImportStrategy {
 
     return {
       source: "saint-gobain-glass.com",
-      manufacturer: params.manufacturer.trim() || "Saint-Gobain",
+      manufacturer: params.manufacturer.trim(),
       websiteUrl,
       category: params.category || "Glass",
       productPageMatcher: isSaintGobainProductPage,

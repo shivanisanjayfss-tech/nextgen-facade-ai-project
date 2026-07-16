@@ -1,7 +1,5 @@
 import {
-  CANONICAL_MANUFACTURERS,
   PRODUCT_BRANDS,
-  resolveCanonicalManufacturer,
   resolveProductBrand,
 } from "@/lib/manufacturer-catalog";
 import {
@@ -25,13 +23,25 @@ import {
   pickBestProductImageUrl,
 } from "@/lib/product-image-url";
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
-import { normalizeManufacturerForImport } from "@/services/manufacturer-registry.service";
+import { resolveManufacturerIdentity } from "@/services/manufacturer-identity.service";
 import { parseMaterialSpecs } from "@/lib/material-specs";
 import { resolveAlpolicSlug } from "@/lib/alpolic-products";
 import { slugify } from "@/lib/utils";
 import type { MaterialRow } from "@/types/database";
 import { DB_TABLES } from "@/types/database";
-import type { CrawledProduct, MaterialPersistDecision, MaterialPersistResult, ProductType } from "@/types/import";
+import type {
+  CrawledProduct,
+  MaterialPersistDecision,
+  MaterialPersistResult,
+  PersistCrawledProductsOptions,
+  ProductType,
+} from "@/types/import";
+
+export type { PersistCrawledProductsOptions };
+
+type PersistOutcome = "imported" | "updated" | "skipped";
+
+type MaterialMatchKind = "source_url" | "slug" | "manufacturer_id" | "none";
 
 type MaterialUpsertRow = Pick<
   MaterialRow,
@@ -48,17 +58,6 @@ type MaterialUpsertRow = Pick<
 > & {
   manufacturer_id?: string | null;
 };
-
-/** Registry context passed from the scheduler for id-based product linking. */
-export interface PersistCrawledProductsOptions {
-  manufacturerId: string;
-  registryName: string;
-  registryBrand?: string | null;
-}
-
-type PersistOutcome = "imported" | "updated" | "skipped";
-
-type MaterialMatchKind = "source_url" | "slug" | "manufacturer_name" | "none";
 
 interface MaterialMatch {
   row: MaterialRow | null;
@@ -239,7 +238,7 @@ function buildSpecs(product: CrawledProduct): Record<string, unknown> {
   return specs;
 }
 
-/** Maps a crawled product to a normalized materials-table upsert row. */
+/** Maps a crawled product to a materials-table upsert row (identity resolved before save). */
 export function mapCrawledProductToMaterialRow(
   product: CrawledProduct,
 ): MaterialUpsertRow {
@@ -247,10 +246,7 @@ export function mapCrawledProductToMaterialRow(
     name: normalizeProductName(product.productName),
     slug: resolveSlug(product),
     category: normalizeCategory(product.category),
-    manufacturer: resolveCanonicalManufacturer(
-      normalizeText(product.manufacturer),
-      product.sourceUrl,
-    ),
+    manufacturer: normalizeText(product.manufacturer),
     description: normalizeText(product.description ?? ""),
     specs: buildSpecs(product),
     image_url: normalizeProductImageUrl(product.imageUrl?.trim() || null),
@@ -269,70 +265,38 @@ function isMissingManufacturerIdColumn(message: string): boolean {
   return message.includes("manufacturer_id") && message.includes("does not exist");
 }
 
-async function ensureManufacturerIdentity(
+async function applyManufacturerIdentity(
   incoming: MaterialUpsertRow,
   options?: PersistCrawledProductsOptions,
 ): Promise<MaterialUpsertRow> {
-  if (incoming.manufacturer_id) {
-    return incoming;
-  }
-
-  return normalizeImportedManufacturer(incoming, options);
-}
-
-async function normalizeImportedManufacturer(
-  incoming: MaterialUpsertRow,
-  options?: PersistCrawledProductsOptions,
-): Promise<MaterialUpsertRow> {
-  const contextualized = applyRegistryImportContext(incoming, options);
-
-  const normalized = await normalizeManufacturerForImport({
-    rawName: contextualized.manufacturer,
-    website: contextualized.source_url ?? undefined,
-    manufacturerId: contextualized.manufacturer_id ?? options?.manufacturerId,
+  const identity = await resolveManufacturerIdentity({
+    manufacturerId: options?.manufacturerId ?? incoming.manufacturer_id ?? undefined,
+    rawName: options?.registryName ?? incoming.manufacturer,
+    website: incoming.source_url ?? undefined,
+    sourceUrl: incoming.source_url ?? undefined,
   });
-
-  if (!normalized.manufacturerId) {
-    return contextualized;
-  }
-
-  const specs = {
-    ...(contextualized.specs as Record<string, unknown>),
-  };
-
-  if (normalized.brand) {
-    specs.brand = normalized.brand;
-  }
-
-  return {
-    ...contextualized,
-    manufacturer_id: normalized.manufacturerId,
-    manufacturer: normalized.canonicalName,
-    specs,
-  };
-}
-
-function applyRegistryImportContext(
-  incoming: MaterialUpsertRow,
-  context?: PersistCrawledProductsOptions,
-): MaterialUpsertRow {
-  if (!context?.manufacturerId) {
-    return incoming;
-  }
 
   const specs = {
     ...(incoming.specs as Record<string, unknown>),
   };
 
-  if (context.registryBrand) {
-    specs.brand = context.registryBrand;
+  const brand = options?.registryBrand ?? identity.brand;
+  if (brand) {
+    specs.brand = brand;
   }
+
+  const tags = new Set(incoming.tags ?? []);
+  if (identity.canonicalName) {
+    tags.add(slugify(normalizeText(identity.canonicalName)));
+  }
+  tags.delete(slugify(normalizeText(incoming.manufacturer)));
 
   return {
     ...incoming,
-    manufacturer_id: context.manufacturerId,
-    manufacturer: context.registryName,
+    manufacturer_id: identity.manufacturerId,
+    manufacturer: identity.canonicalName || incoming.manufacturer,
     specs,
+    tags: normalizeTags(Array.from(tags)),
   };
 }
 
@@ -360,6 +324,29 @@ async function findByManufacturerAndName(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   incoming: MaterialUpsertRow,
 ): Promise<MaterialRow | null> {
+  const normalizedName = incoming.name.toLowerCase();
+
+  if (incoming.manufacturer_id) {
+    const { data: byId, error: byIdError } = await supabase
+      .from(DB_TABLES.materials)
+      .select("*")
+      .eq("manufacturer_id", incoming.manufacturer_id);
+
+    if (byIdError) {
+      throw new ServiceError(
+        formatPersistError(byIdError, "lookup by manufacturer_id and name"),
+        "DATABASE_ERROR",
+        500,
+      );
+    }
+
+    const match = (byId ?? []).find(
+      (row) => normalizeText((row as MaterialRow).name).toLowerCase() === normalizedName,
+    );
+
+    return match ? (match as MaterialRow) : null;
+  }
+
   const { data: candidates, error } = await supabase
     .from(DB_TABLES.materials)
     .select("*")
@@ -374,7 +361,6 @@ async function findByManufacturerAndName(
   }
 
   const normalizedManufacturer = incoming.manufacturer.toLowerCase();
-  const normalizedName = incoming.name.toLowerCase();
 
   const match = (candidates ?? []).find((row) => {
     const candidate = row as MaterialRow;
@@ -431,7 +417,7 @@ async function findExistingMaterial(
 
   const byManufacturerName = await findByManufacturerAndName(supabase, incoming);
   if (byManufacturerName) {
-    return { row: byManufacturerName, kind: "manufacturer_name" };
+    return { row: byManufacturerName, kind: "manufacturer_id" };
   }
 
   return { row: null, kind: "none" };
@@ -494,9 +480,7 @@ function mergeIncomingWithExisting(
     slug: existing.slug || incoming.slug,
     source_url: incoming.source_url || existing.source_url,
     category: incoming.category || existing.category,
-    manufacturer:
-      incoming.manufacturer ||
-      resolveCanonicalManufacturer(existing.manufacturer, existing.source_url),
+    manufacturer: incoming.manufacturer || existing.manufacturer,
     image_url:
       incomingImage ??
       pickBestProductImageUrl(existing.image_url, galleryImages) ??
@@ -512,7 +496,7 @@ async function updateExistingMaterial(
   incoming: MaterialUpsertRow,
 ): Promise<void> {
   const merged = mergeIncomingWithExisting(existing, incoming);
-  const payload = await ensureManufacturerIdentity(merged);
+  const payload = await applyManufacturerIdentity(merged);
   let { error } = await supabase
     .from(DB_TABLES.materials)
     .update(payload)
@@ -538,7 +522,7 @@ async function insertMaterial(
   supabase: NonNullable<ReturnType<typeof getSupabaseServer>>,
   incoming: MaterialUpsertRow,
 ): Promise<boolean> {
-  const payload = await ensureManufacturerIdentity(incoming);
+  const payload = await applyManufacturerIdentity(incoming);
   let { error } = await supabase.from(DB_TABLES.materials).insert(payload);
 
   if (error && isMissingManufacturerIdColumn(error.message)) {
@@ -572,7 +556,7 @@ async function upsertMaterialRow(
   decision: MaterialPersistDecision;
 }> {
   const existing = match.row;
-  const merged = match.kind === "slug" || match.kind === "manufacturer_name";
+  const merged = match.kind === "slug" || match.kind === "manufacturer_id";
 
   if (existing) {
     const payload = mergeIncomingWithExisting(existing, incoming);
@@ -732,7 +716,7 @@ export async function persistCrawledProducts(
     try {
       const enriched = enrichColourSeriesProduct(product, parentCatalog);
       const mapped = mapCrawledProductToMaterialRow(enriched);
-      const incoming = await normalizeImportedManufacturer(mapped, options);
+      const incoming = await applyManufacturerIdentity(mapped, options);
       const match = await findExistingMaterial(supabase, incoming);
       const { outcome, merged, decision } = await upsertMaterialRow(
         supabase,

@@ -1,7 +1,3 @@
-import {
-  getManufacturerCatalogueMatchNames,
-  resolveCanonicalManufacturer,
-} from "@/lib/manufacturer-catalog";
 import { manufacturerSlug, manufacturerSlugMatches } from "@/lib/manufacturer-slug";
 import { normalizeMaterialCategory } from "@/lib/material-categories";
 import { mapMaterialSummary } from "@/lib/mappers";
@@ -56,11 +52,10 @@ async function fetchManufacturerProductCount(
     }
   }
 
-  const matchNames = getManufacturerCatalogueMatchNames(manufacturerName);
   const { count, error } = await supabase
     .from(DB_TABLES.materials)
     .select("*", { count: "exact", head: true })
-    .in("manufacturer", matchNames);
+    .eq("manufacturer", manufacturerName);
 
   if (error) return 0;
   return count ?? 0;
@@ -87,11 +82,10 @@ async function fetchManufacturerProducts(
     }
   }
 
-  const matchNames = getManufacturerCatalogueMatchNames(manufacturerName);
   const { data, error } = await supabase
     .from(DB_TABLES.materials)
     .select("*")
-    .in("manufacturer", matchNames)
+    .eq("manufacturer", manufacturerName)
     .order("updated_at", { ascending: false })
     .limit(limit);
 
@@ -132,7 +126,7 @@ export async function getManufacturerProfile(
 
       const names = new Set(
         ((data ?? []) as Array<{ manufacturer: string }>).map((row) =>
-          resolveCanonicalManufacturer(row.manufacturer),
+          row.manufacturer.trim(),
         ),
       );
 

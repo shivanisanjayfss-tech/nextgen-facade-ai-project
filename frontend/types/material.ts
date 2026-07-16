@@ -27,6 +27,7 @@ export interface Material {
   slug: string;
   category: MaterialCategory;
   manufacturer: string;
+  manufacturerId: string | null;
   brand: string | null;
   description: string;
   specs: MaterialSpecs;
@@ -44,6 +45,7 @@ export interface MaterialSummary {
   slug: string;
   category: MaterialCategory;
   manufacturer: string;
+  manufacturerId: string | null;
   brand: string | null;
   description: string;
   imageUrl: string | null;

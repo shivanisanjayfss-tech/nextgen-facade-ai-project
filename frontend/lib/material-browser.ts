@@ -1,9 +1,6 @@
 import { MATERIAL_CATEGORIES } from "@/lib/material-categories";
-import {
-  formatManufacturerGroupLabel,
-  manufacturerCatalogueKey,
-  resolveCanonicalManufacturer,
-} from "@/lib/manufacturer-catalog";
+import { formatManufacturerGroupLabel } from "@/lib/manufacturer-catalog";
+import { manufacturerIdentityKey } from "@/lib/manufacturer-identity";
 import type { MaterialCategory, MaterialSummary } from "@/types";
 
 /** Frontend-only category synonyms for search (no backend changes). */
@@ -28,6 +25,7 @@ const CATEGORY_SEARCH_SYNONYMS: Partial<
 
 export interface ManufacturerGroup {
   manufacturer: string;
+  manufacturerId: string | null;
   brands: string[];
   displayName: string;
   products: MaterialSummary[];
@@ -47,8 +45,15 @@ export interface SearchBrowseIntent {
   highlightedSlug?: string;
 }
 
-function manufacturerKey(category: string, manufacturer: string): string {
-  return `${category}::${manufacturerCatalogueKey(manufacturer)}`;
+function manufacturerKey(
+  category: string,
+  manufacturer: string,
+  manufacturerId?: string | null,
+): string {
+  return `${category}::${manufacturerIdentityKey({
+    manufacturerId,
+    manufacturer,
+  })}`;
 }
 
 function summarizeBrands(products: MaterialSummary[]): string[] {
@@ -100,24 +105,22 @@ export function groupMaterialsByCategoryAndManufacturer(
   const categoryMap = new Map<string, Map<string, MaterialSummary[]>>();
 
   for (const item of items) {
-    const canonicalManufacturer = resolveCanonicalManufacturer(item.manufacturer);
-    const normalizedItem =
-      canonicalManufacturer === item.manufacturer
-        ? item
-        : { ...item, manufacturer: canonicalManufacturer };
+    const groupKey = manufacturerIdentityKey({
+      manufacturerId: item.manufacturerId,
+      manufacturer: item.manufacturer,
+    });
 
-    if (!categoryMap.has(normalizedItem.category)) {
-      categoryMap.set(normalizedItem.category, new Map());
+    if (!categoryMap.has(item.category)) {
+      categoryMap.set(item.category, new Map());
     }
 
-    const manufacturerMap = categoryMap.get(normalizedItem.category)!;
-    const groupKey = manufacturerCatalogueKey(canonicalManufacturer);
+    const manufacturerMap = categoryMap.get(item.category)!;
 
     if (!manufacturerMap.has(groupKey)) {
       manufacturerMap.set(groupKey, []);
     }
 
-    manufacturerMap.get(groupKey)!.push(normalizedItem);
+    manufacturerMap.get(groupKey)!.push(item);
   }
 
   return MATERIAL_CATEGORIES.filter((category) => categoryMap.has(category)).map(
@@ -126,10 +129,12 @@ export function groupMaterialsByCategoryAndManufacturer(
       const manufacturers = Array.from(manufacturerMap.entries())
         .map(([, products]) => {
           const manufacturer = products[0]?.manufacturer ?? "Unknown";
+          const manufacturerId = products[0]?.manufacturerId ?? null;
           const brands = summarizeBrands(products);
 
           return {
             manufacturer,
+            manufacturerId,
             brands,
             displayName: formatManufacturerGroupLabel(manufacturer, brands),
             products: [...products].sort((a, b) => a.name.localeCompare(b.name)),
@@ -181,7 +186,11 @@ export function resolveSearchBrowseIntent(
         manufacturerGroup.brands.some((brand) => brand.toLowerCase().includes(normalized))
       ) {
         expandManufacturers.add(
-          manufacturerKey(group.category, manufacturerGroup.manufacturer),
+          manufacturerKey(
+            group.category,
+            manufacturerGroup.manufacturer,
+            manufacturerGroup.manufacturerId,
+          ),
         );
       }
 
@@ -190,7 +199,11 @@ export function resolveSearchBrowseIntent(
 
         if (productNormalized === normalized) {
           expandManufacturers.add(
-            manufacturerKey(group.category, manufacturerGroup.manufacturer),
+            manufacturerKey(
+            group.category,
+            manufacturerGroup.manufacturer,
+            manufacturerGroup.manufacturerId,
+          ),
           );
           highlightedSlug = product.slug;
           bestProductScore = 100;
@@ -203,7 +216,11 @@ export function resolveSearchBrowseIntent(
           normalized.length > bestProductScore
         ) {
           expandManufacturers.add(
-            manufacturerKey(group.category, manufacturerGroup.manufacturer),
+            manufacturerKey(
+            group.category,
+            manufacturerGroup.manufacturer,
+            manufacturerGroup.manufacturerId,
+          ),
           );
           highlightedSlug = product.slug;
           bestProductScore = normalized.length;

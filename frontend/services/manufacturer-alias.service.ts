@@ -1,3 +1,4 @@
+import { invalidateManufacturerIdentityCache } from "@/services/manufacturer-identity.service";
 import { normalizeIdentityToken } from "@/lib/manufacturer-identity";
 import { ServiceError } from "@/lib/errors";
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
@@ -148,6 +149,8 @@ export async function syncManufacturerAliases(
       syncArrayError.message,
     );
   }
+
+  invalidateManufacturerIdentityCache();
 
   return normalizedAliases;
 }

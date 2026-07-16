@@ -96,6 +96,7 @@ function toSummaryFromMock(m: (typeof MOCK_MATERIALS)[number]): MaterialSummary 
     slug: m.slug,
     category: m.category,
     manufacturer: m.manufacturer,
+    manufacturerId: null,
     brand,
     description: m.description,
     imageUrl: m.imageUrl,

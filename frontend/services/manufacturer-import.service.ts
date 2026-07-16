@@ -1,6 +1,5 @@
 import {
   isAlucobondCatalogueEntry,
-  resolveCanonicalManufacturer,
 } from "@/lib/manufacturer-catalog";
 import {
   detectAlucobondPageType,
@@ -715,7 +714,7 @@ export function mapCrawlerItemToProduct(
 
   const baseProduct: CrawledProduct = {
     productName,
-    manufacturer: resolveCanonicalManufacturer(context.manufacturer),
+    manufacturer: context.manufacturer.trim(),
     brand: context.brand,
     category: context.category,
     fireRating: extractFireRating(haystack),

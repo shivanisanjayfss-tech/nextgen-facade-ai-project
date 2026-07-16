@@ -25,7 +25,11 @@ export const GET = withApiHandler(async (
 
   const [relatedProducts, manufacturerProductCount] = await Promise.all([
     getRelatedMaterials(material),
-    getManufacturerProductCount(material.manufacturer, material.sourceUrl),
+    getManufacturerProductCount(
+      material.manufacturer,
+      material.sourceUrl,
+      material.manufacturerId,
+    ),
   ]);
 
   return apiSuccess(

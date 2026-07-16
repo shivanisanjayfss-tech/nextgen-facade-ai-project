@@ -1,8 +1,5 @@
 import { normalizeMaterialCategory } from "@/lib/material-categories";
-import {
-  resolveCanonicalManufacturer,
-  resolveProductBrand,
-} from "@/lib/manufacturer-catalog";
+import { resolveProductBrand } from "@/lib/manufacturer-catalog";
 import { parseMaterialSpecs } from "@/lib/material-specs";
 import { normalizeProductImageUrl, pickBestProductImageUrl } from "@/lib/product-image-url";
 import type { MaterialRow, DatasheetRow, KnowledgeArticleRow } from "@/types/database";
@@ -31,9 +28,9 @@ function resolveRowBrand(
 }
 
 function resolveRowManufacturer(
-  row: Pick<MaterialRow, "manufacturer" | "source_url">,
+  row: Pick<MaterialRow, "manufacturer">,
 ): string {
-  return resolveCanonicalManufacturer(row.manufacturer, row.source_url);
+  return row.manufacturer.trim();
 }
 
 /** Maps a Supabase material row to the domain Material type. */
@@ -47,6 +44,7 @@ export function mapMaterialRow(row: MaterialRow): Material {
     slug: row.slug,
     category: normalizeMaterialCategory(row.category),
     manufacturer,
+    manufacturerId: row.manufacturer_id ?? null,
     brand,
     description: row.description,
     specs: parseMaterialSpecs(row.specs) as MaterialSpecs,
@@ -68,6 +66,7 @@ export function mapMaterialSummary(row: MaterialRow): MaterialSummary {
     slug: material.slug,
     category: material.category,
     manufacturer: material.manufacturer,
+    manufacturerId: material.manufacturerId,
     brand: material.brand,
     description: material.description,
     imageUrl: material.imageUrl,

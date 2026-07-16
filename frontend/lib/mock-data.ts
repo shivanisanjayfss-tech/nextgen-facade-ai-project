@@ -7,6 +7,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "guardian-sunguard-snx-60-28",
     category: "Glass",
     manufacturer: "Guardian Glass",
+    manufacturerId: null,
     brand: null,
     description:
       "Triple silver low-E coated glass delivering exceptional solar control and visible light transmission for curtain wall applications.",
@@ -33,6 +34,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "neolith-iron-corten",
     category: "Stone",
     manufacturer: "Neolith",
+    manufacturerId: null,
     brand: null,
     description:
       "Sintered stone surface with authentic corten steel aesthetic, UV-stable and suitable for ventilated rainscreen facades.",
@@ -59,6 +61,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "trespa-meteon-fr",
     category: "HPL",
     manufacturer: "Trespa",
+    manufacturerId: null,
     brand: null,
     description:
       "Fire-retardant high-pressure laminate cladding with through-color technology for long-lasting exterior performance.",
@@ -85,6 +88,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "hunter-douglas-84r-louver",
     category: "Louvers",
     manufacturer: "Hunter Douglas Architectural",
+    manufacturerId: null,
     brand: null,
     description:
       "Extruded aluminium elliptical louver system for solar shading and ventilation, available in fixed and motorized configurations.",
@@ -110,6 +114,7 @@ export const MOCK_MATERIALS: Material[] = [
     slug: "zinc-standing-seam-panel",
     category: "Metal",
     manufacturer: "Rheinzink",
+    manufacturerId: null,
     brand: null,
     description:
       "Pre-patinated titanium-zinc standing seam cladding with natural self-healing patina for premium architectural envelopes.",

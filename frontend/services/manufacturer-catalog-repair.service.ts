@@ -1,14 +1,13 @@
 import {
-  CANONICAL_MANUFACTURERS,
   isAlucobondCatalogueEntry,
   isCatalogueDemoDuplicate,
   PRODUCT_BRANDS,
-  resolveCanonicalManufacturer,
   resolveProductBrand,
 } from "@/lib/manufacturer-catalog";
 import { ServiceError } from "@/lib/errors";
 import { parseMaterialSpecs } from "@/lib/material-specs";
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
+import { resolveManufacturerIdentity } from "@/services/manufacturer-identity.service";
 import type { MaterialRow } from "@/types/database";
 import { DB_TABLES } from "@/types/database";
 
@@ -24,10 +23,15 @@ function isDemoDuplicate(row: MaterialRow): boolean {
   return isCatalogueDemoDuplicate(row);
 }
 
-function shouldMigrateRow(row: MaterialRow): boolean {
+async function shouldMigrateRow(row: MaterialRow): Promise<boolean> {
   if (isDemoDuplicate(row)) return false;
 
-  const canonical = resolveCanonicalManufacturer(row.manufacturer, row.source_url);
+  const identity = await resolveManufacturerIdentity({
+    manufacturerId: row.manufacturer_id ?? undefined,
+    rawName: row.manufacturer,
+    sourceUrl: row.source_url ?? undefined,
+  });
+
   const brand = resolveProductBrand({
     manufacturer: row.manufacturer,
     sourceUrl: row.source_url,
@@ -40,13 +44,14 @@ function shouldMigrateRow(row: MaterialRow): boolean {
 
   return (
     isAlucobondCatalogueEntry(row.manufacturer, row.source_url) ||
-    canonical !== row.manufacturer.trim() ||
+    identity.manufacturerId !== row.manufacturer_id ||
+    identity.canonicalName !== row.manufacturer.trim() ||
     Boolean(brand && currentBrand !== brand)
   );
 }
 
 /**
- * Normalizes manufacturer/brand fields and removes mock duplicates that overlap imports.
+ * Normalizes manufacturer identity fields and removes mock duplicates that overlap imports.
  */
 export async function repairManufacturerCatalog(): Promise<RepairManufacturerCatalogResult> {
   if (!isSupabaseConfigured()) {
@@ -109,10 +114,16 @@ export async function repairManufacturerCatalog(): Promise<RepairManufacturerCat
         continue;
       }
 
-      if (!shouldMigrateRow(rawRow)) {
+      if (!(await shouldMigrateRow(rawRow))) {
         result.skipped += 1;
         continue;
       }
+
+      const identity = await resolveManufacturerIdentity({
+        manufacturerId: rawRow.manufacturer_id ?? undefined,
+        rawName: rawRow.manufacturer,
+        sourceUrl: rawRow.source_url ?? undefined,
+      });
 
       const specs = parseMaterialSpecs(rawRow.specs) as Record<string, unknown>;
       const brand =
@@ -123,7 +134,8 @@ export async function repairManufacturerCatalog(): Promise<RepairManufacturerCat
         }) ?? PRODUCT_BRANDS.ALUCOBOND;
 
       const payload: Partial<MaterialRow> = {
-        manufacturer: CANONICAL_MANUFACTURERS.THREE_A_COMPOSITES,
+        manufacturer_id: identity.manufacturerId,
+        manufacturer: identity.canonicalName || rawRow.manufacturer,
         specs: {
           ...specs,
           brand,

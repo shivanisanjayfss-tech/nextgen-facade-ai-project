@@ -1,9 +1,5 @@
-import {
-  getManufacturerCatalogueMatchNames,
-  isCatalogueDemoDuplicate,
-  resolveCanonicalManufacturer,
-} from "@/lib/manufacturer-catalog";
 import { ServiceError } from "@/lib/errors";
+import { isCatalogueDemoDuplicate } from "@/lib/manufacturer-catalog";
 import { mapMaterialRow, mapMaterialSummary } from "@/lib/mappers";
 import {
   filterActiveMaterialRows,
@@ -20,6 +16,7 @@ import {
 } from "@/lib/pagination";
 import { getMockMaterialById, MOCK_MATERIALS } from "@/lib/mock-data";
 import { getSupabaseServer } from "@/lib/supabase";
+import { resolveManufacturerIdentity } from "@/services/manufacturer-identity.service";
 import type { MaterialRow } from "@/types/database";
 import { DB_TABLES } from "@/types/database";
 import type { Material, MaterialSummary } from "@/types";
@@ -31,6 +28,7 @@ function toSummary(material: Material): MaterialSummary {
     slug: material.slug,
     category: material.category,
     manufacturer: material.manufacturer,
+    manufacturerId: material.manufacturerId,
     brand: material.brand,
     description: material.description,
     imageUrl: material.imageUrl,
@@ -179,11 +177,11 @@ export async function getRelatedMaterials(
   limit = 24,
 ): Promise<MaterialSummary[]> {
   const supabase = getSupabaseServer();
-  const canonical = resolveCanonicalManufacturer(material.manufacturer, material.sourceUrl);
-  const matchNames = getManufacturerCatalogueMatchNames(
-    material.manufacturer,
-    material.sourceUrl,
-  );
+  const identity = await resolveManufacturerIdentity({
+    manufacturerId: material.manufacturerId ?? undefined,
+    rawName: material.manufacturer,
+    sourceUrl: material.sourceUrl ?? undefined,
+  });
 
   if (supabase) {
     const useActiveColumn = await hasMaterialsIsActiveColumn(supabase);
@@ -194,29 +192,29 @@ export async function getRelatedMaterials(
       relatedQuery = relatedQuery.eq("is_active", true);
     }
 
+    if (identity.manufacturerId) {
+      relatedQuery = relatedQuery.eq("manufacturer_id", identity.manufacturerId);
+    } else {
+      relatedQuery = relatedQuery.eq("manufacturer", identity.canonicalName);
+    }
+
     const { data, error } = await relatedQuery
-      .in("manufacturer", matchNames)
       .neq("slug", material.slug)
       .order("name", { ascending: true })
-      .limit(limit * 2);
+      .limit(limit);
 
     if (error) handleSupabaseError(error, "getRelatedMaterials");
 
     return filterActiveMaterialRows(data as MaterialRow[])
       .map(mapMaterialSummary)
-      .filter(
-        (item) =>
-          !isCatalogueDemoDuplicate(item) &&
-          resolveCanonicalManufacturer(item.manufacturer) === canonical,
-      )
-      .slice(0, limit);
+      .filter((item) => !isCatalogueDemoDuplicate(item));
   }
 
   return MOCK_MATERIALS.map(toSummary)
     .filter(
       (item) =>
         !isCatalogueDemoDuplicate(item) &&
-        resolveCanonicalManufacturer(item.manufacturer) === canonical &&
+        item.manufacturer === identity.canonicalName &&
         item.slug !== material.slug,
     )
     .sort((a, b) => a.name.localeCompare(b.name))
@@ -227,39 +225,44 @@ export async function getRelatedMaterials(
 export async function getManufacturerProductCount(
   manufacturer: string,
   sourceUrl?: string | null,
+  manufacturerId?: string | null,
 ): Promise<number> {
   const supabase = getSupabaseServer();
-  const canonical = resolveCanonicalManufacturer(manufacturer, sourceUrl);
-  const matchNames = getManufacturerCatalogueMatchNames(manufacturer, sourceUrl);
+  const identity = await resolveManufacturerIdentity({
+    manufacturerId: manufacturerId ?? undefined,
+    rawName: manufacturer,
+    sourceUrl: sourceUrl ?? undefined,
+  });
 
   if (supabase) {
     const useActiveColumn = await hasMaterialsIsActiveColumn(supabase);
 
-    let countQuery = supabase
-      .from(DB_TABLES.materials)
-      .select("slug, manufacturer, source_url");
+    let countQuery = supabase.from(DB_TABLES.materials).select("slug, manufacturer_id");
 
     if (useActiveColumn) {
       countQuery = countQuery.eq("is_active", true);
     }
 
-    const { data, error } = await countQuery.in("manufacturer", matchNames);
+    if (identity.manufacturerId) {
+      countQuery = countQuery.eq("manufacturer_id", identity.manufacturerId);
+    } else {
+      countQuery = countQuery.eq("manufacturer", identity.canonicalName);
+    }
+
+    const { data, error } = await countQuery;
 
     if (error) handleSupabaseError(error, "getManufacturerProductCount");
 
     return (data ?? []).filter((row) => {
-      const record = row as Pick<MaterialRow, "slug" | "manufacturer" | "source_url">;
-      return (
-        !isCatalogueDemoDuplicate(record) &&
-        resolveCanonicalManufacturer(record.manufacturer, record.source_url) === canonical
-      );
+      const record = row as Pick<MaterialRow, "slug">;
+      return !isCatalogueDemoDuplicate(record);
     }).length;
   }
 
   return MOCK_MATERIALS.filter(
     (item) =>
       !isCatalogueDemoDuplicate(item) &&
-      resolveCanonicalManufacturer(item.manufacturer, item.sourceUrl) === canonical,
+      item.manufacturer === identity.canonicalName,
   ).length;
 }
 

@@ -328,7 +328,7 @@ export function buildStatusReasons(options: {
 
 export function buildPersistReason(options: {
   outcome: MaterialPersistOutcome;
-  matchKind: "source_url" | "slug" | "manufacturer_name" | "none";
+  matchKind: "source_url" | "slug" | "manufacturer_id" | "none";
   analysis?: MaterialChangeAnalysis;
   errorMessage?: string;
 }): string {
@@ -354,7 +354,7 @@ export function logPersistDecision(options: {
   slug: string;
   sourceUrl: string;
   outcome: MaterialPersistOutcome;
-  matchKind: "source_url" | "slug" | "manufacturer_name" | "none";
+  matchKind: "source_url" | "slug" | "manufacturer_id" | "none";
   reason: string;
   statusReasons: string[];
   analysis?: MaterialChangeAnalysis;

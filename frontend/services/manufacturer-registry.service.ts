@@ -1,8 +1,4 @@
-import { getManufacturerCatalogueMatchNames, resolveCanonicalManufacturer } from "@/lib/manufacturer-catalog";
 import {
-  buildManufacturerAliasIndex,
-  normalizeManufacturerLabel,
-  resolveManufacturerFromIndex,
   type NormalizedManufacturerIdentity,
 } from "@/lib/manufacturer-normalization";
 import {
@@ -10,6 +6,10 @@ import {
   loadManufacturerAliasMap,
   syncManufacturerAliases,
 } from "@/services/manufacturer-alias.service";
+import {
+  invalidateManufacturerIdentityCache,
+  resolveManufacturerIdentity,
+} from "@/services/manufacturer-identity.service";
 import {
   identityTokenMatchesRow,
   normalizeWebsiteHost,
@@ -141,17 +141,9 @@ function findRegistryRowByIdentity(
   }
 
   if (options.name) {
-    const canonical = resolveCanonicalManufacturer(options.name);
     const byName = rows.find((row) =>
       identityTokenMatchesRow({
         token: options.name!,
-        name: row.name,
-        brand: row.brand,
-        slug: row.slug,
-        aliases: row.aliases,
-      }) ||
-      identityTokenMatchesRow({
-        token: canonical,
         name: row.name,
         brand: row.brand,
         slug: row.slug,
@@ -344,18 +336,17 @@ async function countProductsForManufacturer(
     );
   }
 
-  const matchNames = getManufacturerCatalogueMatchNames(manufacturerName);
-  const { count, error } = await supabase
+  const { count: byNameCount, error: byNameError } = await supabase
     .from(DB_TABLES.materials)
     .select("*", { count: "exact", head: true })
-    .in("manufacturer", matchNames);
+    .eq("manufacturer", manufacturerName);
 
-  if (error) {
-    console.error("[manufacturer-registry] Product count by name failed:", error.message);
+  if (byNameError) {
+    console.error("[manufacturer-registry] Product count by name failed:", byNameError.message);
     return null;
   }
 
-  return count ?? 0;
+  return byNameCount ?? 0;
 }
 
 /** Builds the scheduler import queue from the manufacturer registry. */
@@ -482,6 +473,7 @@ export async function resolveManufacturerIdByName(
 /** Clears the in-memory manufacturer id lookup cache. */
 export function clearManufacturerIdCache(): void {
   manufacturerIdCache.clear();
+  invalidateManufacturerIdentityCache();
 }
 
 /**
@@ -493,21 +485,11 @@ export async function normalizeManufacturerForImport(options: {
   website?: string;
   manufacturerId?: string;
 }): Promise<NormalizedManufacturerIdentity> {
-  const rows = await loadRegistryRows();
-  const index = buildManufacturerAliasIndex(rows);
-  const websiteHost = options.website ? normalizeWebsiteHost(options.website) : undefined;
-
-  const resolved = resolveManufacturerFromIndex(index, {
+  return resolveManufacturerIdentity({
     manufacturerId: options.manufacturerId,
     rawName: options.rawName,
-    websiteHost,
+    website: options.website,
   });
-
-  if (resolved) {
-    return resolved;
-  }
-
-  return normalizeManufacturerLabel(options.rawName, index, websiteHost);
 }
 
 /** Updates manufacturer registry configuration. */

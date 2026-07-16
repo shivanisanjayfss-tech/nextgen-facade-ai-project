@@ -75,3 +75,15 @@ export function mergeAliasList(
     new Set([...(existing ?? []), ...additions.map((alias) => alias.trim()).filter(Boolean)]),
   );
 }
+
+/** Stable grouping key — prefers manufacturer_id over free-text labels. */
+export function manufacturerIdentityKey(options: {
+  manufacturerId?: string | null;
+  manufacturer?: string | null;
+}): string {
+  if (options.manufacturerId?.trim()) {
+    return options.manufacturerId.trim();
+  }
+
+  return (options.manufacturer ?? "").trim().toLowerCase();
+}
