@@ -143,12 +143,14 @@ function ActionButton({
 
 function HeroActions({
   datasheetUrl,
+  datasheetIntelligenceHref,
   websiteUrl,
 }: {
   datasheetUrl?: string;
+  datasheetIntelligenceHref?: string;
   websiteUrl?: string;
 }) {
-  if (!datasheetUrl && !websiteUrl) return null;
+  if (!datasheetUrl && !websiteUrl && !datasheetIntelligenceHref) return null;
 
   return (
     <div className="mt-8 space-y-3">
@@ -156,6 +158,13 @@ function HeroActions({
         <ActionButton href={datasheetUrl} variant="primary" size="large" external>
           <DownloadIcon className="h-5 w-5" />
           Download Datasheet
+        </ActionButton>
+      )}
+
+      {datasheetIntelligenceHref && (
+        <ActionButton href={datasheetIntelligenceHref} variant="secondary" size="large">
+          <DownloadIcon className="h-5 w-5" />
+          AI Datasheet Intelligence
         </ActionButton>
       )}
 
@@ -299,7 +308,13 @@ export function MaterialDetailView({
                 </div>
               )}
 
-              <HeroActions datasheetUrl={datasheetUrl} websiteUrl={websiteUrl} />
+              <HeroActions
+                datasheetUrl={datasheetUrl}
+                datasheetIntelligenceHref={
+                  datasheetUrl ? `/materials/${material.slug}/datasheet` : undefined
+                }
+                websiteUrl={websiteUrl}
+              />
             </div>
           </div>
         </div>

@@ -2,6 +2,10 @@
 -- NextGen Facade AI — Import history for scheduled / automatic imports
 -- Migration: 004_import_history.sql
 --
+-- Historical migration — originally created import_history (base columns only).
+-- For new databases, prefer 020a_import_history_baseline.sql which includes
+-- columns from 008 and 010 as well.
+--
 -- Run in Supabase Dashboard → SQL Editor
 -- =============================================================================
 

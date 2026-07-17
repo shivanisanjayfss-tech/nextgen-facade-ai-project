@@ -4,7 +4,37 @@
 --
 -- Adds batch run tracking, structured event logs, and crawl diagnostics on
 -- import_history. Idempotent — safe to re-run.
+--
+-- Prerequisites (apply in order):
+--   1) 020a_import_history_baseline.sql
+--   2) 021_import_scheduler_bootstrap.sql
+--   3) 022_import_diagnostics.sql (this file)
+--
+-- Requires public.import_history and public.manufacturers to exist.
 -- =============================================================================
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'import_history'
+  ) THEN
+    RAISE EXCEPTION
+      'import_history table is missing. Apply 020a_import_history_baseline.sql, then 021_import_scheduler_bootstrap.sql, before running this migration.';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = 'manufacturers'
+  ) THEN
+    RAISE EXCEPTION
+      'manufacturers table is missing. Apply 020_manufacturer_registry_complete.sql before running this migration.';
+  END IF;
+END $$;
 
 -- 1) Batch scheduler runs (one row per cron / Run Now execution)
 CREATE TABLE IF NOT EXISTS public.import_scheduler_runs (

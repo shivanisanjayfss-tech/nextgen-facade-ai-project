@@ -10,7 +10,10 @@
     "lint": "eslint",
     "db:apply-manufacturer-registry": "node scripts/apply-manufacturer-registry.mjs",
     "db:apply-import-scheduler": "node scripts/apply-import-scheduler.mjs",
-    "db:apply-import-diagnostics": "node scripts/apply-import-diagnostics.mjs"
+    "db:apply-import-diagnostics": "node scripts/apply-import-diagnostics.mjs",
+    "db:apply-import-chain": "node scripts/apply-import-migration-chain.mjs",
+    "db:verify-import-diagnostics": "node scripts/verify-import-diagnostics.mjs",
+    "db:apply-datasheet-intelligence": "node scripts/apply-datasheet-intelligence.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.11.0",
@@ -18,6 +21,7 @@
     "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "unpdf": "^1.6.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

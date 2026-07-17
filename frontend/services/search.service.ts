@@ -21,6 +21,7 @@ import { getSupabaseServer } from "@/lib/supabase";
 import type { MaterialRow } from "@/types/database";
 import { DB_TABLES } from "@/types/database";
 import type { MaterialCategory } from "@/types/material";
+import { searchDatasheetIntelligence } from "@/services/datasheet-intelligence.service";
 import type { MaterialSummary, SearchParams, SearchResult } from "@/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -185,10 +186,56 @@ function emptySearchResult(
   };
 }
 
+function hasDatasheetIntelligenceFilters(params: SearchParams): boolean {
+  return Boolean(
+    params.fireRating?.trim() ||
+      params.thickness?.trim() ||
+      params.finish?.trim() ||
+      params.thermalValue?.trim() ||
+      params.certification?.trim(),
+  );
+}
+
 /** Searches materials with optional filters and pagination. */
 export async function searchMaterials(params: SearchParams): Promise<SearchResult> {
   const { page, limit, from, to } = normalizePagination(params.page, params.limit, 50);
   const query = params.q?.trim() ?? "";
+
+  if (hasDatasheetIntelligenceFilters(params)) {
+    const intelligenceResult = await searchDatasheetIntelligence({
+      q: query || undefined,
+      fireRating: params.fireRating,
+      thickness: params.thickness,
+      finish: params.finish,
+      manufacturer: params.manufacturer,
+      manufacturerId: params.manufacturerId,
+      thermalValue: params.thermalValue,
+      certification: params.certification,
+      page,
+      limit,
+    });
+
+    const items: MaterialSummary[] = intelligenceResult.items.map((hit) => ({
+      id: hit.materialId,
+      name: hit.materialName,
+      slug: hit.materialSlug,
+      category: hit.category as MaterialSummary["category"],
+      manufacturer: hit.manufacturer,
+      manufacturerId: null,
+      brand: null,
+      description: hit.aiSummary ?? "",
+      imageUrl: hit.imageUrl,
+      tags: hit.certifications,
+    }));
+
+    return {
+      items,
+      total: intelligenceResult.total,
+      page: intelligenceResult.page,
+      limit: intelligenceResult.limit,
+      query,
+    };
+  }
 
   const categoryFromQuery = query ? resolveSearchQueryCategory(query) : undefined;
   const explicitCategory = params.category

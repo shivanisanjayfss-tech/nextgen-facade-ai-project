@@ -4,13 +4,12 @@ import { DB_TABLES } from "@/types/database";
 import type { ImportSchedulerRunRow, SchedulerRunStatus } from "@/types/import-diagnostics";
 import type { ImportRunTrigger } from "@/types/import-scheduler";
 
-let useMemorySchedulerRuns = false;
-
 function isMissingSchedulerRunsTable(message?: string): boolean {
   return Boolean(
     message?.includes("import_scheduler_runs") &&
       (message.includes("Could not find the table") ||
-        message.includes("does not exist")),
+        message.includes("does not exist") ||
+        message.includes("schema cache")),
   );
 }
 
@@ -73,7 +72,7 @@ export interface FinalizeSchedulerRunInput {
 export async function createSchedulerRunRecord(
   input: CreateSchedulerRunInput,
 ): Promise<string | null> {
-  if (!isSupabaseConfigured() || useMemorySchedulerRuns) {
+  if (!isSupabaseConfigured()) {
     return null;
   }
 
@@ -94,7 +93,6 @@ export async function createSchedulerRunRecord(
   if (error || !data) {
     const message = error?.message ?? "unknown error";
     if (isMissingSchedulerRunsTable(message)) {
-      useMemorySchedulerRuns = true;
       console.warn(
         "[import-scheduler-runs] Table missing — batch runs not persisted until migration 022 is applied.",
       );
@@ -112,7 +110,7 @@ export async function createSchedulerRunRecord(
 export async function finalizeSchedulerRunRecord(
   input: FinalizeSchedulerRunInput,
 ): Promise<void> {
-  if (!isSupabaseConfigured() || useMemorySchedulerRuns || !input.id) {
+  if (!isSupabaseConfigured() || !input.id) {
     return;
   }
 
@@ -135,7 +133,9 @@ export async function finalizeSchedulerRunRecord(
 
   if (error) {
     if (isMissingSchedulerRunsTable(error.message)) {
-      useMemorySchedulerRuns = true;
+      console.warn(
+        "[import-scheduler-runs] Table missing — could not finalize batch run.",
+      );
       return;
     }
 
@@ -159,11 +159,47 @@ export function resolveSchedulerRunStatus(
   return "partial";
 }
 
-/** Loads a batch run by id (for future phases). */
+function normalizeSchedulerRunRows(
+  rows: Partial<ImportSchedulerRunRow>[],
+): ImportSchedulerRunRow[] {
+  return rows.map((row) => normalizeSchedulerRunRow(row));
+}
+
+/** Lists recent scheduler batch runs, newest first. */
+export async function listSchedulerRuns(
+  limit = 50,
+): Promise<ImportSchedulerRunRow[]> {
+  if (!isSupabaseConfigured()) {
+    return [];
+  }
+
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from(DB_TABLES.importSchedulerRuns)
+    .select("*")
+    .order("started_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    if (isMissingSchedulerRunsTable(error.message)) {
+      return [];
+    }
+
+    throw new ServiceError(
+      `Failed to list scheduler runs: ${error.message}`,
+      "SCHEDULER_RUN_LIST_FAILED",
+      500,
+    );
+  }
+
+  return normalizeSchedulerRunRows((data ?? []) as Partial<ImportSchedulerRunRow>[]);
+}
+
+/** Loads a batch run by id. */
 export async function getSchedulerRunById(
   id: string,
 ): Promise<ImportSchedulerRunRow | null> {
-  if (!isSupabaseConfigured() || useMemorySchedulerRuns) {
+  if (!isSupabaseConfigured()) {
     return null;
   }
 
@@ -176,7 +212,6 @@ export async function getSchedulerRunById(
 
   if (error) {
     if (isMissingSchedulerRunsTable(error.message)) {
-      useMemorySchedulerRuns = true;
       return null;
     }
 

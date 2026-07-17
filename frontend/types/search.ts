@@ -6,6 +6,12 @@ export interface SearchParams {
   manufacturer?: string;
   /** Prefer filtering by registry id when available. */
   manufacturerId?: string;
+  /** Datasheet intelligence filters (Phase 4). */
+  fireRating?: string;
+  thickness?: string;
+  finish?: string;
+  thermalValue?: string;
+  certification?: string;
   page?: number;
   limit?: number;
 }

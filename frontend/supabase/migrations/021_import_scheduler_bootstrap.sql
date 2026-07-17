@@ -2,8 +2,11 @@
 -- NextGen Facade AI — Import scheduler & history bootstrap (idempotent)
 -- Migration: 021_import_scheduler_bootstrap.sql
 --
--- Creates import_scheduler_settings (with live progress columns) and
--- import_history when missing. Safe to re-run after partial migrations.
+-- Creates import_scheduler_settings (with live progress columns) and ensures
+-- import_history has all pre-022 columns.
+--
+-- Prerequisite: 020a_import_history_baseline.sql (creates import_history).
+-- Apply order: 020a → 021 → 022
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.import_scheduler_settings (
@@ -52,11 +55,15 @@ CREATE TABLE IF NOT EXISTS public.import_history (
   imported INTEGER NOT NULL DEFAULT 0,
   updated INTEGER NOT NULL DEFAULT 0,
   skipped INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
   ignored INTEGER NOT NULL DEFAULT 0,
   duration_seconds NUMERIC(10, 2),
-  error_message TEXT
+  error_message TEXT,
+  extracted_products INTEGER NOT NULL DEFAULT 0,
+  product_decisions JSONB NOT NULL DEFAULT '[]'::jsonb
 );
 
+-- Ensure columns exist when 020a was skipped but a legacy 004 table remains.
 ALTER TABLE public.import_history
   ADD COLUMN IF NOT EXISTS failed INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS extracted_products INTEGER NOT NULL DEFAULT 0,

@@ -1,4 +1,6 @@
+import { applyImportHistoryFilters } from "@/lib/import-history-filters";
 import { ServiceError } from "@/lib/errors";
+import { isMemoryImportHistoryId } from "@/lib/import-history-id";
 import {
   createMemoryImportHistoryId,
   getMemoryImportHistory,
@@ -8,6 +10,7 @@ import {
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
 import type { MaterialPersistDecision } from "@/types/import";
 import type { ImportHistoryDiagnostics } from "@/types/import-diagnostics";
+import type { ImportHistoryFilters } from "@/types/import-analytics";
 import type { ImportHistoryRow } from "@/types/import-history";
 import { DB_TABLES } from "@/types/database";
 import type { ImportHistoryStatus } from "@/types/import-history";
@@ -41,13 +44,12 @@ export interface FinalizeImportHistoryInput {
   diagnostics?: ImportHistoryDiagnostics;
 }
 
-let useMemoryHistory = false;
-
 function isMissingHistoryTable(message?: string): boolean {
   return Boolean(
     message?.includes("import_history") &&
       (message.includes("Could not find the table") ||
-        message.includes("does not exist")),
+        message.includes("does not exist") ||
+        message.includes("schema cache")),
   );
 }
 
@@ -126,6 +128,11 @@ function createMemoryHistoryRow(input: CreateImportHistoryInput): ImportHistoryR
     error_message: null,
     product_decisions: [],
     extracted_products: 0,
+    scheduler_run_id: input.schedulerRunId ?? null,
+    manufacturer_id: input.manufacturerId ?? null,
+    trigger: input.trigger ?? null,
+    strategy_key: input.strategyKey ?? null,
+    diagnostics: {},
   });
 }
 
@@ -198,7 +205,7 @@ function stripDiagnosticsFields<T extends Record<string, unknown>>(
 export async function createImportHistoryRecord(
   input: CreateImportHistoryInput,
 ): Promise<ImportHistoryRow | null> {
-  if (!isSupabaseConfigured() || useMemoryHistory) {
+  if (!isSupabaseConfigured()) {
     const row = createMemoryHistoryRow(input);
     prependMemoryImportHistory(row);
     return row;
@@ -224,9 +231,8 @@ export async function createImportHistoryRecord(
   if (error || !data) {
     const message = error?.message ?? "unknown error";
     if (isMissingHistoryTable(message)) {
-      useMemoryHistory = true;
       console.warn(
-        "[import-history] Table missing — using in-memory history until migration 004 is applied.",
+        "[import-history] Table missing — using in-memory history for this run only.",
       );
       const row = createMemoryHistoryRow(input);
       prependMemoryImportHistory(row);
@@ -265,7 +271,7 @@ export async function finalizeImportHistoryRecord(
 ): Promise<void> {
   const patch = buildFinalizePatch(input);
 
-  if (!isSupabaseConfigured() || useMemoryHistory) {
+  if (!isSupabaseConfigured() || isMemoryImportHistoryId(input.id)) {
     updateMemoryImportHistory(input.id, patch);
     return;
   }
@@ -311,7 +317,6 @@ export async function finalizeImportHistoryRecord(
 
   if (error) {
     if (isMissingHistoryTable(error.message)) {
-      useMemoryHistory = true;
       updateMemoryImportHistory(input.id, patch);
       return;
     }
@@ -336,28 +341,87 @@ function mergeHistoryRows(rows: ImportHistoryRow[]): ImportHistoryRow[] {
   );
 }
 
+function applySupabaseHistoryFilters(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  query: any,
+  filters?: ImportHistoryFilters,
+) {
+  let next = query;
+
+  if (filters?.status) {
+    next = next.eq("status", filters.status);
+  }
+  if (filters?.manufacturer) {
+    next = next.ilike("manufacturer", `%${filters.manufacturer}%`);
+  }
+  if (filters?.trigger) {
+    next = next.eq("trigger", filters.trigger);
+  }
+  if (filters?.batchId) {
+    next = next.eq("scheduler_run_id", filters.batchId);
+  }
+  if (filters?.from) {
+    next = next.gte("started_at", filters.from);
+  }
+  if (filters?.to) {
+    next = next.lte("started_at", filters.to);
+  }
+  if (filters?.preset === "zero_products") {
+    next = next.eq("extracted_products", 0);
+  }
+  if (filters?.preset === "updated_only") {
+    next = next.eq("imported", 0).gt("updated", 0);
+  }
+
+  return next;
+}
+
 /** Returns recent import history rows, newest first. */
 export async function listImportHistory(
   limit = 50,
+  filters?: ImportHistoryFilters,
 ): Promise<ImportHistoryRow[]> {
-  const memoryRows = getMemoryImportHistory().map((row) =>
-    normalizeImportHistoryRow(row),
+  const memoryRows = applyImportHistoryFilters(
+    getMemoryImportHistory().map((row) => normalizeImportHistoryRow(row)),
+    filters,
   );
 
-  if (!isSupabaseConfigured() || useMemoryHistory) {
+  if (!isSupabaseConfigured()) {
     return memoryRows.slice(0, limit);
   }
 
   const supabase = requireSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from(DB_TABLES.importHistory)
     .select("*")
     .order("started_at", { ascending: false })
     .limit(limit);
 
+  query = applySupabaseHistoryFilters(query, filters);
+
+  let { data, error } = await query;
+
+  if (error && isMissingDiagnosticsColumn(error.message)) {
+    const fallbackFilters = filters?.batchId || filters?.trigger ? undefined : filters;
+    let fallbackQuery = supabase
+      .from(DB_TABLES.importHistory)
+      .select("*")
+      .order("started_at", { ascending: false })
+      .limit(limit);
+
+    if (fallbackFilters) {
+      fallbackQuery = applySupabaseHistoryFilters(fallbackQuery, {
+        ...fallbackFilters,
+        batchId: undefined,
+        trigger: undefined,
+      });
+    }
+
+    ({ data, error } = await fallbackQuery);
+  }
+
   if (error) {
     if (isMissingHistoryTable(error.message)) {
-      useMemoryHistory = true;
       return memoryRows.slice(0, limit);
     }
 
@@ -368,10 +432,10 @@ export async function listImportHistory(
     );
   }
 
-  return mergeHistoryRows([
-    ...memoryRows,
-    ...((data ?? []) as ImportHistoryRow[]),
-  ]).slice(0, limit);
+  return applyImportHistoryFilters(
+    mergeHistoryRows([...memoryRows, ...((data ?? []) as ImportHistoryRow[])]),
+    filters,
+  ).slice(0, limit);
 }
 
 /** Returns a single import history row with per-product decisions. */
@@ -380,7 +444,7 @@ export async function getImportHistoryById(
 ): Promise<ImportHistoryRow | null> {
   const memoryMatch = getMemoryImportHistory().find((row) => row.id === id);
 
-  if (!isSupabaseConfigured() || useMemoryHistory) {
+  if (!isSupabaseConfigured()) {
     return memoryMatch ? normalizeImportHistoryRow(memoryMatch) : null;
   }
 
@@ -393,7 +457,6 @@ export async function getImportHistoryById(
 
   if (error) {
     if (isMissingHistoryTable(error.message)) {
-      useMemoryHistory = true;
       return memoryMatch ? normalizeImportHistoryRow(memoryMatch) : null;
     }
 

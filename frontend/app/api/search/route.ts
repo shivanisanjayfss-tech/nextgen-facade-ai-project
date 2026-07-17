@@ -16,6 +16,11 @@ export const GET = withApiHandler(async (request: NextRequest) => {
   const category = searchParams.get("category") ?? undefined;
   const manufacturer = searchParams.get("manufacturer") ?? undefined;
   const manufacturerId = searchParams.get("manufacturerId") ?? undefined;
+  const fireRating = searchParams.get("fireRating") ?? undefined;
+  const thickness = searchParams.get("thickness") ?? undefined;
+  const finish = searchParams.get("finish") ?? undefined;
+  const thermalValue = searchParams.get("thermalValue") ?? undefined;
+  const certification = searchParams.get("certification") ?? undefined;
 
   const rawPage = Number(searchParams.get("page") ?? "1");
   const rawLimit = Number(searchParams.get("limit") ?? "12");
@@ -26,6 +31,11 @@ export const GET = withApiHandler(async (request: NextRequest) => {
     category,
     manufacturer,
     manufacturerId,
+    fireRating,
+    thickness,
+    finish,
+    thermalValue,
+    certification,
     page,
     limit,
   });

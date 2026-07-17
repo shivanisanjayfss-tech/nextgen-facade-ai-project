@@ -32,6 +32,7 @@ const ADMIN_LINKS = [
   { href: "/admin/import", label: "Import & Scheduler", description: "Run imports and manage the monthly scheduler" },
   { href: "/admin/manufacturers", label: "Manufacturers", description: "Configure the dynamic import queue" },
   { href: "/admin/import-history", label: "Import History", description: "Audit per-run import results" },
+  { href: "/admin/datasheets", label: "Datasheet Intelligence", description: "AI extraction, review, and technical search facets" },
 ];
 
 const STATUS_STYLES: Record<string, string> = {

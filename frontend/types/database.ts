@@ -52,6 +52,34 @@ export interface KnowledgeArticleRow {
   tags: string[];
 }
 
+/**
+ * Supabase row shape for `material_datasheet_intelligence`.
+ */
+export interface MaterialDatasheetIntelligenceRow {
+  id: string;
+  material_id: string;
+  source_url: string;
+  status: string;
+  extraction_status: string | null;
+  page_count: number | null;
+  raw_pages: Array<{ page: number; text: string }>;
+  extracted_fields: Record<string, unknown>;
+  manual_overrides: Record<string, unknown>;
+  ai_summary: string | null;
+  technical_highlights: string[];
+  fire_rating: string | null;
+  thickness: string | null;
+  finish: string | null;
+  thermal_value: string | null;
+  certifications: string[];
+  search_text: string;
+  error_message: string | null;
+  processed_at: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Typed Supabase table names used across services. */
 export const DB_TABLES = {
   materials: "materials",
@@ -65,4 +93,5 @@ export const DB_TABLES = {
   manufacturers: "manufacturers",
   manufacturerAliases: "manufacturer_aliases",
   analyticsEvents: "analytics_events",
+  materialDatasheetIntelligence: "material_datasheet_intelligence",
 } as const;

@@ -3,13 +3,12 @@ import { DB_TABLES } from "@/types/database";
 import type { ImportRunEventRow } from "@/types/import-diagnostics";
 import type { ImportSchedulerStage } from "@/lib/import-scheduler-logger";
 
-let useMemoryRunEvents = false;
-
 function isMissingRunEventsTable(message?: string): boolean {
   return Boolean(
     message?.includes("import_run_events") &&
       (message.includes("Could not find the table") ||
-        message.includes("does not exist")),
+        message.includes("does not exist") ||
+        message.includes("schema cache")),
   );
 }
 
@@ -26,7 +25,7 @@ export interface RecordImportRunEventInput {
 export async function recordImportRunEvent(
   input: RecordImportRunEventInput,
 ): Promise<void> {
-  if (!isSupabaseConfigured() || useMemoryRunEvents) {
+  if (!isSupabaseConfigured()) {
     return;
   }
 
@@ -44,7 +43,6 @@ export async function recordImportRunEvent(
 
   if (error) {
     if (isMissingRunEventsTable(error.message)) {
-      useMemoryRunEvents = true;
       console.warn(
         "[import-run-events] Table missing — events not persisted until migration 022 is applied.",
       );
@@ -55,11 +53,11 @@ export async function recordImportRunEvent(
   }
 }
 
-/** Returns events for a manufacturer import run (for future phases). */
+/** Returns events for a manufacturer import run. */
 export async function listImportRunEventsByHistoryId(
   importHistoryId: string,
 ): Promise<ImportRunEventRow[]> {
-  if (!isSupabaseConfigured() || useMemoryRunEvents) {
+  if (!isSupabaseConfigured()) {
     return [];
   }
 
@@ -74,11 +72,39 @@ export async function listImportRunEventsByHistoryId(
 
   if (error) {
     if (isMissingRunEventsTable(error.message)) {
-      useMemoryRunEvents = true;
       return [];
     }
 
     console.error("[import-run-events] Failed to list events:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as ImportRunEventRow[];
+}
+
+/** Returns events for a scheduler batch run. */
+export async function listImportRunEventsBySchedulerRunId(
+  schedulerRunId: string,
+): Promise<ImportRunEventRow[]> {
+  if (!isSupabaseConfigured()) {
+    return [];
+  }
+
+  const supabase = getSupabaseServer();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from(DB_TABLES.importRunEvents)
+    .select("*")
+    .eq("scheduler_run_id", schedulerRunId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    if (isMissingRunEventsTable(error.message)) {
+      return [];
+    }
+
+    console.error("[import-run-events] Failed to list batch events:", error.message);
     return [];
   }
 

@@ -3,17 +3,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { useDebounce } from "@/hooks/useDebounce";
 import { resolveApiSearchParams } from "@/lib/material-browser";
+import type { DatasheetSearchFiltersState } from "@/components/search/DatasheetIntelligenceFilters";
 import type { MaterialSummary, SearchResult } from "@/types";
 
 interface UseSearchOptions {
   initialQuery?: string;
   category?: string;
+  datasheetFilters?: DatasheetSearchFiltersState;
   debounceMs?: number;
 }
 
 async function fetchAllSearchPages(
   q?: string,
   category?: string,
+  datasheetFilters?: DatasheetSearchFiltersState,
 ): Promise<SearchResult> {
   const limit = 50;
   let page = 1;
@@ -25,6 +28,11 @@ async function fetchAllSearchPages(
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (category) params.set("category", category);
+    if (datasheetFilters?.fireRating) params.set("fireRating", datasheetFilters.fireRating);
+    if (datasheetFilters?.thickness) params.set("thickness", datasheetFilters.thickness);
+    if (datasheetFilters?.finish) params.set("finish", datasheetFilters.finish);
+    if (datasheetFilters?.thermalValue) params.set("thermalValue", datasheetFilters.thermalValue);
+    if (datasheetFilters?.certification) params.set("certification", datasheetFilters.certification);
     params.set("page", String(page));
     params.set("limit", String(limit));
 
@@ -65,6 +73,7 @@ async function fetchAllSearchPages(
 export function useSearch({
   initialQuery = "",
   category,
+  datasheetFilters,
   debounceMs = 400,
 }: UseSearchOptions = {}) {
   const [query, setQuery] = useState(initialQuery);
@@ -73,26 +82,30 @@ export function useSearch({
   const [error, setError] = useState<string | null>(null);
 
   const debouncedQuery = useDebounce(query, debounceMs);
+  const debouncedFilters = useDebounce(datasheetFilters, debounceMs);
 
-  const search = useCallback(async (q: string, cat?: string) => {
-    setIsLoading(true);
-    setError(null);
+  const search = useCallback(
+    async (q: string, cat?: string, filters?: DatasheetSearchFiltersState) => {
+      setIsLoading(true);
+      setError(null);
 
-    try {
-      const { q: apiQuery, category: apiCategory } = resolveApiSearchParams(q, cat);
-      const data = await fetchAllSearchPages(apiQuery, apiCategory);
-      setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Search failed");
-      setResult(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+      try {
+        const { q: apiQuery, category: apiCategory } = resolveApiSearchParams(q, cat);
+        const data = await fetchAllSearchPages(apiQuery, apiCategory, filters);
+        setResult(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Search failed");
+        setResult(null);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
-    search(debouncedQuery, category);
-  }, [debouncedQuery, category, search]);
+    search(debouncedQuery, category, debouncedFilters);
+  }, [debouncedQuery, category, debouncedFilters, search]);
 
   return { query, setQuery, result, isLoading, error, search };
 }
