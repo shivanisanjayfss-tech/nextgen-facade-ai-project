@@ -3,6 +3,9 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { isServiceError } from "@/lib/errors";
 import { runScheduledImports } from "@/services/import-scheduler.service";
 
+/** Allow long multi-manufacturer imports to finish after the HTTP response. */
+export const maxDuration = 3600;
+
 /**
  * POST /api/import/scheduler/run-now
  *

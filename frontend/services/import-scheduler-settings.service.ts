@@ -37,6 +37,7 @@ function isMissingProgressColumn(message?: string): boolean {
   return Boolean(
     message?.includes("run_in_progress") ||
       message?.includes("progress_manufacturer_index") ||
+      message?.includes("progress_stage") ||
       message?.includes("schema cache"),
   );
 }
@@ -161,6 +162,8 @@ async function writeSettingsToDatabase(
       progress_updated: _pu,
       progress_skipped: _ps,
       progress_failed: _pf,
+      progress_stage: _pst,
+      progress_detail: _pd,
       last_run_started_at: _lrs,
       last_run_finished_at: _lrf,
       last_run_duration_seconds: _lrd,
@@ -199,18 +202,26 @@ async function writeSettingsToDatabase(
 }
 
 export async function getImportSchedulerSettings(): Promise<ImportSchedulerSettingsRow> {
+  const memory = getSchedulerMemorySettings();
+
   if (!isSupabaseConfigured() || isSchedulerMemoryMode()) {
-    return getSchedulerMemorySettings();
+    return memory;
   }
 
   const dbReady = await ensureSettingsRow();
   if (!dbReady) {
-    return getSchedulerMemorySettings();
+    return memory;
   }
 
   const fromDb = await readSettingsFromDatabase();
   if (!fromDb) {
-    return getSchedulerMemorySettings();
+    return memory;
+  }
+
+  // Never let a stale DB row overwrite an active in-memory run (common when
+  // progress columns are missing or polling races the background worker).
+  if (memory.run_in_progress && !fromDb.run_in_progress) {
+    return memory;
   }
 
   patchSchedulerMemorySettings(fromDb);
@@ -263,6 +274,8 @@ export async function beginSchedulerRun(options: {
     progress_updated: 0,
     progress_skipped: 0,
     progress_failed: 0,
+    progress_stage: "scheduler_started",
+    progress_detail: `Queued ${options.manufacturerTotal} manufacturer(s)`,
     last_run_imported: 0,
     last_run_updated: 0,
     last_run_skipped: 0,
@@ -278,6 +291,8 @@ export async function updateSchedulerRunProgress(options: {
   updated: number;
   skipped: number;
   failed: number;
+  stage?: string | null;
+  detail?: string | null;
 }): Promise<void> {
   await updateImportSchedulerSettings({
     run_in_progress: true,
@@ -288,6 +303,8 @@ export async function updateSchedulerRunProgress(options: {
     progress_updated: options.updated,
     progress_skipped: options.skipped,
     progress_failed: options.failed,
+    progress_stage: options.stage ?? null,
+    progress_detail: options.detail ?? null,
   });
 }
 
@@ -320,6 +337,8 @@ export async function completeSchedulerRun(options: {
     progress_updated: options.totals.updated,
     progress_skipped: options.totals.skipped,
     progress_failed: options.totals.failed,
+    progress_stage: "scheduler_completed",
+    progress_detail: `Finished in ${options.durationSeconds}s`,
     ...(options.hadFailures
       ? { last_failed_run_at: finishedAt }
       : { last_successful_run_at: finishedAt }),
@@ -346,6 +365,8 @@ function formatScheduleDescription(settings: ImportSchedulerSettingsRow): string
 function buildProgress(settings: ImportSchedulerSettingsRow): ImportSchedulerProgress | null {
   if (!settings.run_in_progress) return null;
 
+  const crawledPagesMatch = settings.progress_detail?.match(/(\d+)\s+page/i);
+
   return {
     manufacturerIndex: settings.progress_manufacturer_index,
     manufacturerTotal: settings.progress_manufacturer_total,
@@ -354,6 +375,9 @@ function buildProgress(settings: ImportSchedulerSettingsRow): ImportSchedulerPro
     updated: settings.progress_updated,
     skipped: settings.progress_skipped,
     failed: settings.progress_failed,
+    stage: settings.progress_stage,
+    detail: settings.progress_detail,
+    crawledPages: crawledPagesMatch ? Number(crawledPagesMatch[1]) : null,
   };
 }
 

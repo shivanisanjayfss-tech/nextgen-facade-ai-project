@@ -8,7 +8,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:apply-manufacturer-registry": "node scripts/apply-manufacturer-registry.mjs"
+    "db:apply-manufacturer-registry": "node scripts/apply-manufacturer-registry.mjs",
+    "db:apply-import-scheduler": "node scripts/apply-import-scheduler.mjs",
+    "db:apply-import-diagnostics": "node scripts/apply-import-diagnostics.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.11.0",

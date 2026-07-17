@@ -1,4 +1,5 @@
 import type { MaterialPersistDecision } from "@/types/import";
+import type { ImportHistoryDiagnostics } from "@/types/import-diagnostics";
 
 /** Terminal status stored in import_history. */
 export type ImportHistoryStatus = "running" | "succeeded" | "failed" | "partial";
@@ -19,6 +20,16 @@ export interface ImportHistoryRow {
   error_message: string | null;
   product_decisions: MaterialPersistDecision[];
   extracted_products: number;
+  /** Phase 3a — optional until migration 022 is applied. */
+  scheduler_run_id?: string | null;
+  manufacturer_id?: string | null;
+  trigger?: string | null;
+  strategy_key?: string | null;
+  crawl_status?: string | null;
+  crawled_pages?: number;
+  apify_run_id?: string | null;
+  apify_run_url?: string | null;
+  diagnostics?: ImportHistoryDiagnostics;
 }
 
 /** Per-manufacturer result returned by POST /api/import/run-all. */

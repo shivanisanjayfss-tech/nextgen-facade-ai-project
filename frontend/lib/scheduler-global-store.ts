@@ -29,6 +29,8 @@ function createDefaultSettings(): ImportSchedulerSettingsRow {
     progress_updated: 0,
     progress_skipped: 0,
     progress_failed: 0,
+    progress_stage: null,
+    progress_detail: null,
     last_run_started_at: null,
     last_run_finished_at: null,
     last_run_duration_seconds: null,

@@ -1,11 +1,11 @@
-import path from "node:path";
 import type { NextConfig } from "next";
 import { PRODUCT_IMAGE_REMOTE_HOSTS } from "./lib/product-image-url";
 
 const nextConfig: NextConfig = {
-  // Pin workspace root so Turbopack does not rescan the monorepo on every request.
+  // Turbopack root must be the Next.js app directory (frontend/), not the monorepo
+  // parent. Pointing at ".." drops nested App Router pages such as /admin/import.
   turbopack: {
-    root: path.resolve(__dirname, ".."),
+    root: __dirname,
   },
   images: {
     remotePatterns: PRODUCT_IMAGE_REMOTE_HOSTS.map((hostname) => ({

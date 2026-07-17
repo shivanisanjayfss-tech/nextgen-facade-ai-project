@@ -59,6 +59,8 @@ export const DB_TABLES = {
   knowledgeArticles: "knowledge_articles",
   importHistory: "import_history",
   importSchedulerSettings: "import_scheduler_settings",
+  importSchedulerRuns: "import_scheduler_runs",
+  importRunEvents: "import_run_events",
   importManufacturers: "import_manufacturers",
   manufacturers: "manufacturers",
   manufacturerAliases: "manufacturer_aliases",

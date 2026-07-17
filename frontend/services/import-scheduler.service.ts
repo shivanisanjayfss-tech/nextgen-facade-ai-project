@@ -1,9 +1,17 @@
+import { after } from "next/server";
 import { IMPORT_SCHEDULER_FREQUENCY, IMPORT_SCHEDULER_MAX_RETRIES } from "@/lib/import-scheduler-config";
+import { clearImportRunLogContext } from "@/lib/import-run-log-context";
+import { logImportSchedulerStage } from "@/lib/import-scheduler-logger";
 import {
   getActiveSchedulerRun,
   setActiveSchedulerRun,
 } from "@/lib/scheduler-global-store";
 import { buildManufacturerImportQueue } from "@/services/manufacturer-registry.service";
+import {
+  createSchedulerRunRecord,
+  finalizeSchedulerRunRecord,
+  resolveSchedulerRunStatus,
+} from "@/services/import-scheduler-runs.service";
 import {
   beginSchedulerRun,
   clearSchedulerRunState,
@@ -32,27 +40,66 @@ async function executeScheduledImports(
   manufacturers: Awaited<ReturnType<typeof buildManufacturerImportQueue>>,
 ): Promise<RunScheduledImportsResult> {
   const startedAt = Date.now();
-
-  await beginSchedulerRun({
-    trigger,
-    manufacturerTotal: manufacturers.length,
-  });
-
-  const runningTotals = {
-    imported: 0,
-    updated: 0,
-    skipped: 0,
-    failed: 0,
-    ignored: 0,
-  };
+  const startedAtIso = new Date(startedAt).toISOString();
+  let schedulerRunId: string | null = null;
 
   try {
+    schedulerRunId = await createSchedulerRunRecord({
+      trigger,
+      manufacturerTotal: manufacturers.length,
+      startedAt: startedAtIso,
+    });
+
+    logImportSchedulerStage({
+      stage: "scheduler_started",
+      manufacturerTotal: manufacturers.length,
+      detail: `trigger=${trigger}, queue=${manufacturers.length}`,
+      schedulerRunId: schedulerRunId ?? undefined,
+    });
+
+    await beginSchedulerRun({
+      trigger,
+      manufacturerTotal: manufacturers.length,
+    });
+
+    const runningTotals = {
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      ignored: 0,
+    };
+
     const result = await runAllManufacturerImports({
       manufacturers,
       useFullImport: true,
       maxRetries: IMPORT_SCHEDULER_MAX_RETRIES,
+      syncProductLifecycle: true,
+      schedulerRunId,
+      trigger,
       onManufacturerStart: async (manufacturer, index, total) => {
+        logImportSchedulerStage({
+          stage: index === 1 ? "manufacturer_selected" : "next_manufacturer_started",
+          manufacturer,
+          manufacturerIndex: index,
+          manufacturerTotal: total,
+          schedulerRunId: schedulerRunId ?? undefined,
+        });
+
         await updateSchedulerRunProgress({
+          manufacturer,
+          manufacturerIndex: index,
+          manufacturerTotal: total,
+          imported: runningTotals.imported,
+          updated: runningTotals.updated,
+          skipped: runningTotals.skipped,
+          failed: runningTotals.failed,
+          stage: "manufacturer_selected",
+          detail: "Starting manufacturer import",
+        });
+
+        logImportSchedulerStage({
+          stage: "progress_updated",
           manufacturer,
           manufacturerIndex: index,
           manufacturerTotal: total,
@@ -62,12 +109,38 @@ async function executeScheduledImports(
           failed: runningTotals.failed,
         });
       },
+      onManufacturerStage: async (update) => {
+        await updateSchedulerRunProgress({
+          manufacturer: update.manufacturer,
+          manufacturerIndex: update.manufacturerIndex,
+          manufacturerTotal: update.manufacturerTotal,
+          imported: runningTotals.imported,
+          updated: runningTotals.updated,
+          skipped: runningTotals.skipped,
+          failed: runningTotals.failed,
+          stage: update.stage,
+          detail: update.detail,
+        });
+      },
       onManufacturerComplete: async (report, index, total) => {
         runningTotals.imported += report.imported;
         runningTotals.updated += report.updated;
         runningTotals.skipped += report.skipped;
         runningTotals.failed += report.failed;
         runningTotals.ignored += report.ignored;
+
+        logImportSchedulerStage({
+          stage: "manufacturer_finished",
+          manufacturer: report.manufacturer,
+          manufacturerIndex: index,
+          manufacturerTotal: total,
+          imported: runningTotals.imported,
+          updated: runningTotals.updated,
+          skipped: runningTotals.skipped,
+          failed: runningTotals.failed,
+          detail: `status=${report.status}, extracted=${report.extractedProducts}`,
+          schedulerRunId: schedulerRunId ?? undefined,
+        });
 
         await updateSchedulerRunProgress({
           manufacturer: report.manufacturer,
@@ -77,9 +150,21 @@ async function executeScheduledImports(
           updated: runningTotals.updated,
           skipped: runningTotals.skipped,
           failed: runningTotals.failed,
+          stage: "manufacturer_finished",
+          detail: `Finished — imported ${report.imported}, updated ${report.updated}, skipped ${report.skipped}, failed ${report.failed}`,
+        });
+
+        logImportSchedulerStage({
+          stage: "progress_updated",
+          manufacturer: report.manufacturer,
+          manufacturerIndex: index,
+          manufacturerTotal: total,
+          imported: runningTotals.imported,
+          updated: runningTotals.updated,
+          skipped: runningTotals.skipped,
+          failed: runningTotals.failed,
         });
       },
-      syncProductLifecycle: true,
     });
 
     const durationSeconds = Number(
@@ -89,6 +174,17 @@ async function executeScheduledImports(
     const hadFailures = result.manufacturers.some(
       (report) => report.status === "failed",
     );
+    const batchStatus = resolveSchedulerRunStatus(result.manufacturers);
+
+    if (schedulerRunId) {
+      await finalizeSchedulerRunRecord({
+        id: schedulerRunId,
+        status: batchStatus,
+        finishedAt: new Date().toISOString(),
+        durationSeconds,
+        totals: result.totals,
+      });
+    }
 
     await completeSchedulerRun({
       trigger,
@@ -100,6 +196,17 @@ async function executeScheduledImports(
         skipped: result.totals.skipped,
         failed: result.totals.failed,
       },
+    });
+
+    logImportSchedulerStage({
+      stage: "scheduler_completed",
+      manufacturerTotal: manufacturers.length,
+      imported: result.totals.imported,
+      updated: result.totals.updated,
+      skipped: result.totals.skipped,
+      failed: result.totals.failed,
+      detail: `duration=${durationSeconds}s`,
+      schedulerRunId: schedulerRunId ?? undefined,
     });
 
     return {
@@ -124,9 +231,60 @@ async function executeScheduledImports(
       },
     };
   } catch (error) {
+    const durationSeconds = Number(((Date.now() - startedAt) / 1000).toFixed(2));
+
+    if (schedulerRunId) {
+      await finalizeSchedulerRunRecord({
+        id: schedulerRunId,
+        status: "failed",
+        finishedAt: new Date().toISOString(),
+        durationSeconds,
+        totals: {
+          imported: 0,
+          updated: 0,
+          skipped: 0,
+          failed: manufacturers.length,
+          ignored: 0,
+        },
+        errorMessage:
+          error instanceof Error ? error.message : "Scheduled import failed",
+      });
+    }
+
+    await completeSchedulerRun({
+      trigger,
+      hadFailures: true,
+      durationSeconds,
+      totals: {
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        failed: manufacturers.length,
+      },
+    }).catch(() => undefined);
+
     await clearSchedulerRunState();
     throw error;
+  } finally {
+    clearImportRunLogContext();
   }
+}
+
+function runScheduledImportsInBackground(
+  trigger: ImportRunTrigger,
+  manufacturers: Awaited<ReturnType<typeof buildManufacturerImportQueue>>,
+): Promise<RunScheduledImportsResult> {
+  const runPromise = executeScheduledImports(trigger, manufacturers)
+    .catch(async (error) => {
+      console.error("[import-scheduler] Background run failed:", error);
+      throw error;
+    })
+    .finally(() => {
+      setActiveSchedulerRun(null);
+    });
+
+  setActiveSchedulerRun(runPromise);
+  return runPromise;
 }
 
 /**
@@ -172,28 +330,9 @@ export async function runScheduledImports(
   }
 
   if (options.background) {
-    const runPromise = executeScheduledImports(options.trigger, manufacturers)
-      .catch(async (error) => {
-        const durationSeconds = 0;
-        await completeSchedulerRun({
-          trigger: options.trigger,
-          hadFailures: true,
-          durationSeconds,
-          totals: {
-            imported: 0,
-            updated: 0,
-            skipped: 0,
-            failed: manufacturers.length,
-          },
-        });
-        console.error("[import-scheduler] Background run failed:", error);
-        throw error;
-      })
-      .finally(() => {
-        setActiveSchedulerRun(null);
-      });
-
-    setActiveSchedulerRun(runPromise);
+    after(async () => {
+      await runScheduledImportsInBackground(options.trigger, manufacturers);
+    });
 
     return {
       skipped: false,

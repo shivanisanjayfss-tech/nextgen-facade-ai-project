@@ -7,6 +7,7 @@ import {
 } from "@/lib/import-history-memory";
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
 import type { MaterialPersistDecision } from "@/types/import";
+import type { ImportHistoryDiagnostics } from "@/types/import-diagnostics";
 import type { ImportHistoryRow } from "@/types/import-history";
 import { DB_TABLES } from "@/types/database";
 import type { ImportHistoryStatus } from "@/types/import-history";
@@ -14,6 +15,10 @@ import type { ImportHistoryStatus } from "@/types/import-history";
 export interface CreateImportHistoryInput {
   manufacturer: string;
   startedAt: string;
+  schedulerRunId?: string;
+  manufacturerId?: string;
+  trigger?: string;
+  strategyKey?: string;
 }
 
 export interface FinalizeImportHistoryInput {
@@ -29,6 +34,11 @@ export interface FinalizeImportHistoryInput {
   extractedProducts?: number;
   productDecisions?: MaterialPersistDecision[];
   errorMessage?: string;
+  crawlStatus?: string;
+  crawledPages?: number;
+  apifyRunId?: string;
+  apifyRunUrl?: string;
+  diagnostics?: ImportHistoryDiagnostics;
 }
 
 let useMemoryHistory = false;
@@ -45,6 +55,18 @@ function isMissingProductDecisionsColumn(message?: string): boolean {
   return Boolean(
     message?.includes("product_decisions") ||
       message?.includes("extracted_products"),
+  );
+}
+
+function isMissingDiagnosticsColumn(message?: string): boolean {
+  return Boolean(
+    message?.includes("scheduler_run_id") ||
+      message?.includes("manufacturer_id") ||
+      message?.includes("strategy_key") ||
+      message?.includes("crawl_status") ||
+      message?.includes("crawled_pages") ||
+      message?.includes("apify_run_id") ||
+      message?.includes("diagnostics"),
   );
 }
 
@@ -76,6 +98,15 @@ function normalizeImportHistoryRow(row: Partial<ImportHistoryRow>): ImportHistor
     error_message: row.error_message ?? null,
     product_decisions: row.product_decisions ?? [],
     extracted_products: row.extracted_products ?? 0,
+    scheduler_run_id: row.scheduler_run_id ?? null,
+    manufacturer_id: row.manufacturer_id ?? null,
+    trigger: row.trigger ?? null,
+    strategy_key: row.strategy_key ?? null,
+    crawl_status: row.crawl_status ?? null,
+    crawled_pages: row.crawled_pages ?? 0,
+    apify_run_id: row.apify_run_id ?? null,
+    apify_run_url: row.apify_run_url ?? null,
+    diagnostics: (row.diagnostics as ImportHistoryDiagnostics | undefined) ?? {},
   };
 }
 
@@ -98,6 +129,21 @@ function createMemoryHistoryRow(input: CreateImportHistoryInput): ImportHistoryR
   });
 }
 
+function buildCreatePayload(input: CreateImportHistoryInput) {
+  return {
+    manufacturer: input.manufacturer,
+    started_at: input.startedAt,
+    status: "running",
+    product_decisions: [],
+    extracted_products: 0,
+    scheduler_run_id: input.schedulerRunId ?? null,
+    manufacturer_id: input.manufacturerId ?? null,
+    trigger: input.trigger ?? null,
+    strategy_key: input.strategyKey ?? null,
+    diagnostics: {},
+  };
+}
+
 function buildFinalizePatch(input: FinalizeImportHistoryInput) {
   return {
     finished_at: input.finishedAt,
@@ -111,7 +157,41 @@ function buildFinalizePatch(input: FinalizeImportHistoryInput) {
     error_message: input.errorMessage ?? null,
     product_decisions: input.productDecisions ?? [],
     extracted_products: input.extractedProducts ?? 0,
+    crawl_status: input.crawlStatus ?? null,
+    crawled_pages: input.crawledPages ?? 0,
+    apify_run_id: input.apifyRunId ?? null,
+    apify_run_url: input.apifyRunUrl ?? null,
+    diagnostics: input.diagnostics ?? {},
   };
+}
+
+function stripDiagnosticsFields<T extends Record<string, unknown>>(
+  payload: T,
+): Omit<
+  T,
+  | "scheduler_run_id"
+  | "manufacturer_id"
+  | "trigger"
+  | "strategy_key"
+  | "crawl_status"
+  | "crawled_pages"
+  | "apify_run_id"
+  | "apify_run_url"
+  | "diagnostics"
+> {
+  const {
+    scheduler_run_id: _sr,
+    manufacturer_id: _mid,
+    trigger: _tr,
+    strategy_key: _sk,
+    crawl_status: _cs,
+    crawled_pages: _cp,
+    apify_run_id: _ar,
+    apify_run_url: _au,
+    diagnostics: _dx,
+    ...legacy
+  } = payload;
+  return legacy;
 }
 
 /** Inserts a running import_history row at the start of a manufacturer import. */
@@ -125,17 +205,21 @@ export async function createImportHistoryRecord(
   }
 
   const supabase = requireSupabase();
-  const { data, error } = await supabase
+  const createPayload = buildCreatePayload(input);
+
+  let { data, error } = await supabase
     .from(DB_TABLES.importHistory)
-    .insert({
-      manufacturer: input.manufacturer,
-      started_at: input.startedAt,
-      status: "running",
-      product_decisions: [],
-      extracted_products: 0,
-    })
+    .insert(createPayload)
     .select()
     .single();
+
+  if (error && isMissingDiagnosticsColumn(error.message)) {
+    ({ data, error } = await supabase
+      .from(DB_TABLES.importHistory)
+      .insert(stripDiagnosticsFields(createPayload))
+      .select()
+      .single());
+  }
 
   if (error || !data) {
     const message = error?.message ?? "unknown error";
@@ -192,6 +276,13 @@ export async function finalizeImportHistoryRecord(
     .from(DB_TABLES.importHistory)
     .update(patch)
     .eq("id", input.id);
+
+  if (error && isMissingDiagnosticsColumn(error.message)) {
+    ({ error } = await supabase
+      .from(DB_TABLES.importHistory)
+      .update(stripDiagnosticsFields(patch))
+      .eq("id", input.id));
+  }
 
   if (error?.message?.includes("failed") && error.message.includes("does not exist")) {
     const { failed: _failed, ...legacyPayload } = patch;

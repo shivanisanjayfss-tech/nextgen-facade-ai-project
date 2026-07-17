@@ -34,6 +34,7 @@ import {
 } from "@/lib/apify";
 import { isServiceError, ServiceError } from "@/lib/errors";
 import { isApifyConfigured } from "@/lib/env";
+import { logImportSchedulerStage } from "@/lib/import-scheduler-logger";
 import type { CrawledProduct, CrawlImportResult, IgnoredPage } from "@/types/import";
 
 /** Apify's official Website Content Crawler (tilde form required by the REST API). */
@@ -76,6 +77,11 @@ export interface ManufacturerImportOptions {
   crawlerType?: "cheerio" | "playwright:chrome" | "playwright:adaptive";
   /** Optional Apify proxy groups (e.g. RESIDENTIAL) for bot-protected sites. */
   proxyGroups?: string[];
+  /** Heartbeat while polling Apify (scheduler live progress). */
+  onCrawlPoll?: (update: {
+    status: string;
+    crawledPages: number;
+  }) => void | Promise<void>;
 }
 
 interface CrawlerItem {
@@ -904,6 +910,7 @@ async function waitForCrawlWithPolling(
     limit: number;
     earlyExitProductCount?: number;
     extractionContext: ExtractionContext;
+    onCrawlPoll?: (update: { status: string; crawledPages: number }) => void | Promise<void>;
   },
 ): Promise<{
   run: ApifyActorRun;
@@ -940,6 +947,11 @@ async function waitForCrawlWithPolling(
       status: currentRun.status,
       crawled_pages: partialItems.length,
       crawl_urls: collectCrawledUrls(partialItems),
+    });
+
+    await options.onCrawlPoll?.({
+      status: currentRun.status,
+      crawledPages: partialItems.length,
     });
   };
 
@@ -1105,6 +1117,14 @@ export async function importManufacturerProducts(
   const actorRunUrl = buildRunConsoleUrl(run);
   console.info(`[import:${manufacturer}] Actor run started: ${actorRunUrl}`);
 
+  logImportSchedulerStage({
+    stage: "apify_request_sent",
+    manufacturer,
+    runId: run.id,
+    apifyStatus: run.status,
+    detail: actorRunUrl,
+  });
+
   let finalRun: ApifyActorRun = run;
   let finished = false;
 
@@ -1114,6 +1134,7 @@ export async function importManufacturerProducts(
     limit,
     earlyExitProductCount: options.earlyExitProductCount,
     extractionContext,
+    onCrawlPoll: options.onCrawlPoll,
   });
   finalRun = waitResult.run;
   finished = waitResult.finished;

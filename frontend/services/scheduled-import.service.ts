@@ -2,6 +2,12 @@ import type { ScheduledManufacturer } from "@/types/import-scheduler";
 import { isServiceError, ServiceError } from "@/lib/errors";
 import { isApifyConfigured } from "@/lib/env";
 import { IMPORT_SCHEDULER_MAX_RETRIES } from "@/lib/import-scheduler-config";
+import { buildImportHistoryDiagnostics } from "@/lib/import-history-diagnostics";
+import {
+  clearImportRunLogContext,
+  setImportRunLogContext,
+} from "@/lib/import-run-log-context";
+import { logImportSchedulerStage } from "@/lib/import-scheduler-logger";
 import {
   buildManufacturerImportQueue,
   getManufacturerRegistryById,
@@ -25,6 +31,8 @@ import type {
   ManufacturerImportReport,
   RunAllImportsResult,
 } from "@/types/import-history";
+import type { CrawlImportResult } from "@/types/import";
+import type { ImportRunTrigger } from "@/types/import-scheduler";
 
 export interface RunAllImportsOptions {
   manufacturers?: ScheduledManufacturer[];
@@ -32,6 +40,8 @@ export interface RunAllImportsOptions {
   useFullImport?: boolean;
   maxRetries?: number;
   syncProductLifecycle?: boolean;
+  schedulerRunId?: string | null;
+  trigger?: ImportRunTrigger | "registry";
   onManufacturerStart?: (
     manufacturer: string,
     index: number,
@@ -42,6 +52,13 @@ export interface RunAllImportsOptions {
     index: number,
     total: number,
   ) => void | Promise<void>;
+  onManufacturerStage?: (update: {
+    manufacturer: string;
+    manufacturerIndex: number;
+    manufacturerTotal: number;
+    stage: string;
+    detail?: string;
+  }) => void | Promise<void>;
 }
 
 function resolveImportStatus(
@@ -61,10 +78,16 @@ async function runManufacturerImportAttempt(
   entry: ScheduledManufacturer,
   limits: { maxPages: number; limit: number; timeout: number },
   syncProductLifecycle: boolean,
+  progress?: {
+    manufacturerIndex?: number;
+    manufacturerTotal?: number;
+    onStage?: RunAllImportsOptions["onManufacturerStage"];
+  },
 ): Promise<{
   report: Omit<ManufacturerImportReport, "manufacturer" | "duration">;
   durationSeconds: number;
   errorMessage?: string;
+  crawlResult?: CrawlImportResult;
 }> {
   const startedAt = new Date();
 
@@ -79,7 +102,61 @@ async function runManufacturerImportAttempt(
     timeoutMs: limits.timeout,
   });
 
-  const crawlResult = await importManufacturerProducts(importOptions);
+  logImportSchedulerStage({
+    stage: "crawl_started",
+    manufacturer: entry.manufacturer,
+    manufacturerIndex: progress?.manufacturerIndex,
+    manufacturerTotal: progress?.manufacturerTotal,
+    detail: `strategy=${strategy.id} (importManufacturerProducts — crawlManufacturer not yet implemented)`,
+  });
+
+  await progress?.onStage?.({
+    manufacturer: entry.manufacturer,
+    manufacturerIndex: progress?.manufacturerIndex ?? 0,
+    manufacturerTotal: progress?.manufacturerTotal ?? 0,
+    stage: "crawl_started",
+    detail: `Crawling via ${strategy.id} strategy`,
+  });
+
+  const crawlResult = await importManufacturerProducts({
+    ...importOptions,
+    onCrawlPoll: async (poll) => {
+      await progress?.onStage?.({
+        manufacturer: entry.manufacturer,
+        manufacturerIndex: progress?.manufacturerIndex ?? 0,
+        manufacturerTotal: progress?.manufacturerTotal ?? 0,
+        stage: "apify_polling",
+        detail: `Apify ${poll.status} — ${poll.crawledPages} page(s) crawled`,
+      });
+    },
+  });
+
+  logImportSchedulerStage({
+    stage: "apify_response_received",
+    manufacturer: entry.manufacturer,
+    manufacturerIndex: progress?.manufacturerIndex,
+    manufacturerTotal: progress?.manufacturerTotal,
+    apifyStatus: crawlResult.status,
+    crawledPages: crawlResult.crawled_pages,
+    runId: crawlResult.run_id,
+  });
+
+  logImportSchedulerStage({
+    stage: "products_extracted",
+    manufacturer: entry.manufacturer,
+    manufacturerIndex: progress?.manufacturerIndex,
+    manufacturerTotal: progress?.manufacturerTotal,
+    detail: `${crawlResult.product_count} product(s) from ${crawlResult.crawled_pages} page(s)`,
+  });
+
+  await progress?.onStage?.({
+    manufacturer: entry.manufacturer,
+    manufacturerIndex: progress?.manufacturerIndex ?? 0,
+    manufacturerTotal: progress?.manufacturerTotal ?? 0,
+    stage: "products_extracted",
+    detail: `Extracted ${crawlResult.product_count} product(s)`,
+  });
+
   const persist = await persistCrawledProducts(
     crawlResult.products,
     buildImportPersistContextFromRegistry({
@@ -88,6 +165,25 @@ async function runManufacturerImportAttempt(
       brand: entry.brand ?? null,
     }),
   );
+
+  logImportSchedulerStage({
+    stage: "database_upsert_complete",
+    manufacturer: entry.manufacturer,
+    manufacturerIndex: progress?.manufacturerIndex,
+    manufacturerTotal: progress?.manufacturerTotal,
+    imported: persist.imported,
+    updated: persist.updated,
+    skipped: persist.skipped,
+    failed: persist.errors.length,
+  });
+
+  await progress?.onStage?.({
+    manufacturer: entry.manufacturer,
+    manufacturerIndex: progress?.manufacturerIndex ?? 0,
+    manufacturerTotal: progress?.manufacturerTotal ?? 0,
+    stage: "database_upsert_complete",
+    detail: `Persisted — imported ${persist.imported}, updated ${persist.updated}, skipped ${persist.skipped}`,
+  });
 
   console.info(
     `[scheduled-import] ${entry.manufacturer}: extracted=${crawlResult.product_count}, imported=${persist.imported}, updated=${persist.updated}, skipped=${persist.skipped}, failed=${persist.errors.length}`,
@@ -136,6 +232,7 @@ async function runManufacturerImportAttempt(
       status,
     },
     durationSeconds,
+    crawlResult,
   };
 }
 
@@ -145,121 +242,170 @@ async function importSingleManufacturer(
   options: {
     maxRetries: number;
     syncProductLifecycle: boolean;
+    manufacturerIndex?: number;
+    manufacturerTotal?: number;
+    onStage?: RunAllImportsOptions["onManufacturerStage"];
+    schedulerRunId?: string | null;
+    trigger?: ImportRunTrigger | "registry";
   },
 ): Promise<ManufacturerImportReport> {
-  const startedAt = new Date();
-  const startedAtIso = startedAt.toISOString();
-  let historyId: string | undefined;
-  let lastErrorMessage: string | undefined;
-
   try {
-    const historyRecord = await createImportHistoryRecord({
-      manufacturer: entry.manufacturer,
-      startedAt: startedAtIso,
-    });
-    historyId = historyRecord?.id;
-  } catch (historyError) {
-    console.error(
-      `[scheduled-import] Failed to create history for ${entry.manufacturer}:`,
-      historyError,
-    );
-  }
+    const startedAt = new Date();
+    const startedAtIso = startedAt.toISOString();
+    let historyId: string | undefined;
+    let lastErrorMessage: string | undefined;
+    const strategy = resolveImportStrategy(entry.manufacturer, entry.importStrategy);
 
-  for (let attempt = 1; attempt <= options.maxRetries; attempt += 1) {
     try {
-      const attemptResult = await runManufacturerImportAttempt(
-        entry,
-        limits,
-        options.syncProductLifecycle,
-      );
+      const historyRecord = await createImportHistoryRecord({
+        manufacturer: entry.manufacturer,
+        startedAt: startedAtIso,
+        schedulerRunId: options.schedulerRunId ?? undefined,
+        manufacturerId: entry.id,
+        trigger: options.trigger,
+        strategyKey: strategy.id,
+      });
+      historyId = historyRecord?.id;
 
       if (historyId) {
-        await finalizeImportHistoryRecord({
-          id: historyId,
-          finishedAt: new Date().toISOString(),
-          status: attemptResult.report.status,
+        setImportRunLogContext({
+          schedulerRunId: options.schedulerRunId ?? undefined,
+          importHistoryId: historyId,
+          manufacturer: entry.manufacturer,
+        });
+      }
+    } catch (historyError) {
+      console.error(
+        `[scheduled-import] Failed to create history for ${entry.manufacturer}:`,
+        historyError,
+      );
+    }
+
+    for (let attempt = 1; attempt <= options.maxRetries; attempt += 1) {
+      try {
+        const attemptResult = await runManufacturerImportAttempt(
+          entry,
+          limits,
+          options.syncProductLifecycle,
+          {
+            manufacturerIndex: options.manufacturerIndex,
+            manufacturerTotal: options.manufacturerTotal,
+            onStage: options.onStage,
+          },
+        );
+
+        if (historyId) {
+          await finalizeImportHistoryRecord({
+            id: historyId,
+            finishedAt: new Date().toISOString(),
+            status: attemptResult.report.status,
+            imported: attemptResult.report.imported,
+            updated: attemptResult.report.updated,
+            skipped: attemptResult.report.skipped,
+            failed: attemptResult.report.failed,
+            ignored: attemptResult.report.ignored,
+            durationSeconds: attemptResult.durationSeconds,
+            extractedProducts: attemptResult.report.extractedProducts,
+            productDecisions: attemptResult.report.decisions ?? [],
+            crawlStatus: attemptResult.report.crawlStatus,
+            crawledPages: attemptResult.crawlResult?.crawled_pages,
+            apifyRunId: attemptResult.crawlResult?.run_id,
+            apifyRunUrl: attemptResult.crawlResult?.actor_run_url,
+            diagnostics: attemptResult.crawlResult
+              ? buildImportHistoryDiagnostics(attemptResult.crawlResult)
+              : undefined,
+          });
+        }
+
+        logImportSchedulerStage({
+          stage: "manufacturer_finished",
+          manufacturer: entry.manufacturer,
+          manufacturerIndex: options.manufacturerIndex,
+          manufacturerTotal: options.manufacturerTotal,
           imported: attemptResult.report.imported,
           updated: attemptResult.report.updated,
           skipped: attemptResult.report.skipped,
           failed: attemptResult.report.failed,
-          ignored: attemptResult.report.ignored,
-          durationSeconds: attemptResult.durationSeconds,
-          extractedProducts: attemptResult.report.extractedProducts,
-          productDecisions: attemptResult.report.decisions ?? [],
+          detail: `status=${attemptResult.report.status}`,
+          schedulerRunId: options.schedulerRunId ?? undefined,
+          importHistoryId: historyId,
         });
-      }
 
-      if (entry.id) {
-        await recordManufacturerImportComplete(entry.id, {
-          status: attemptResult.report.status,
-        });
-      }
+        if (entry.id) {
+          await recordManufacturerImportComplete(entry.id, {
+            status: attemptResult.report.status,
+          });
+        }
 
-      return {
-        manufacturer: entry.manufacturer,
-        ...attemptResult.report,
-        duration: attemptResult.durationSeconds,
-      };
-    } catch (error) {
-      lastErrorMessage = isServiceError(error)
-        ? error.message
-        : error instanceof Error
+        return {
+          manufacturer: entry.manufacturer,
+          ...attemptResult.report,
+          duration: attemptResult.durationSeconds,
+        };
+      } catch (error) {
+        lastErrorMessage = isServiceError(error)
           ? error.message
-          : "Import failed";
+          : error instanceof Error
+            ? error.message
+            : "Import failed";
 
-      console.error(
-        `[scheduled-import] ${entry.manufacturer} attempt ${attempt}/${options.maxRetries} failed:`,
-        lastErrorMessage,
-      );
+        console.error(
+          `[scheduled-import] ${entry.manufacturer} attempt ${attempt}/${options.maxRetries} failed:`,
+          lastErrorMessage,
+        );
 
-      if (attempt < options.maxRetries) {
-        continue;
+        if (attempt < options.maxRetries) {
+          continue;
+        }
       }
     }
-  }
 
-  const finishedAt = new Date();
-  const durationSeconds = Number(
-    ((finishedAt.getTime() - startedAt.getTime()) / 1000).toFixed(2),
-  );
+    const finishedAt = new Date();
+    const durationSeconds = Number(
+      ((finishedAt.getTime() - startedAt.getTime()) / 1000).toFixed(2),
+    );
 
-  if (historyId) {
-    await finalizeImportHistoryRecord({
-      id: historyId,
-      finishedAt: finishedAt.toISOString(),
-      status: "failed",
+    if (historyId) {
+      await finalizeImportHistoryRecord({
+        id: historyId,
+        finishedAt: finishedAt.toISOString(),
+        status: "failed",
+        imported: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+        ignored: 0,
+        durationSeconds,
+        extractedProducts: 0,
+        productDecisions: [],
+        errorMessage: lastErrorMessage,
+        crawlStatus: "FAILED",
+      });
+    }
+
+    if (entry.id) {
+      await recordManufacturerImportComplete(entry.id, {
+        status: "failed",
+      });
+    }
+
+    return {
+      manufacturer: entry.manufacturer,
       imported: 0,
       updated: 0,
       skipped: 0,
       failed: 0,
       ignored: 0,
-      durationSeconds,
       extractedProducts: 0,
-      productDecisions: [],
-      errorMessage: lastErrorMessage,
-    });
-  }
-
-  if (entry.id) {
-    await recordManufacturerImportComplete(entry.id, {
+      crawlStatus: "FAILED",
       status: "failed",
-    });
+      duration: durationSeconds,
+      errorMessage: lastErrorMessage,
+      decisions: [],
+    };
+  } finally {
+    clearImportRunLogContext();
   }
-
-  return {
-    manufacturer: entry.manufacturer,
-    imported: 0,
-    updated: 0,
-    skipped: 0,
-    failed: 0,
-    ignored: 0,
-    extractedProducts: 0,
-    crawlStatus: "FAILED",
-    status: "failed",
-    duration: durationSeconds,
-    errorMessage: lastErrorMessage,
-    decisions: [],
-  };
 }
 
 /**
@@ -295,6 +441,11 @@ export async function runAllManufacturerImports(
       report = await importSingleManufacturer(entry, limits, {
         maxRetries,
         syncProductLifecycle,
+        manufacturerIndex: index + 1,
+        manufacturerTotal: total,
+        onStage: options.onManufacturerStage,
+        schedulerRunId: options.schedulerRunId,
+        trigger: options.trigger,
       });
       reports.push(report);
     } catch (error) {
@@ -368,5 +519,6 @@ export async function runSingleManufacturerImport(
   return importSingleManufacturer(entry, limits, {
     maxRetries,
     syncProductLifecycle: options.syncProductLifecycle ?? false,
+    trigger: "registry",
   });
 }

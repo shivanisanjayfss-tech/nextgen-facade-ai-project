@@ -26,21 +26,45 @@ function formatDuration(seconds: number | null): string {
   return `${minutes}m ${remainder}s`;
 }
 
+function formatStageLabel(stage: string): string {
+  return stage.replace(/_/g, " ");
+}
+
 export function ImportSchedulerPanel() {
   const [scheduler, setScheduler] = useState<ImportSchedulerStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pollWarning, setPollWarning] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  const loadInFlightRef = useRef(false);
+  const schedulerRef = useRef<ImportSchedulerStatus | null>(null);
 
-  const loadScheduler = useCallback(async () => {
-    setError(null);
+  const loadScheduler = useCallback(async (options?: { fatal?: boolean }) => {
+    if (loadInFlightRef.current) {
+      return schedulerRef.current;
+    }
+
+    loadInFlightRef.current = true;
+
+    if (options?.fatal) {
+      setError(null);
+      setPollWarning(null);
+    }
 
     try {
-      const response = await fetch("/api/import/scheduler");
-      const json = (await response.json()) as ApiResponse<SchedulerResponse>;
+      const response = await fetch("/api/import/scheduler", {
+        cache: "no-store",
+      });
+
+      let json: ApiResponse<SchedulerResponse>;
+      try {
+        json = (await response.json()) as ApiResponse<SchedulerResponse>;
+      } catch {
+        throw new Error("Scheduler API returned an invalid response.");
+      }
 
       if (!response.ok || !json.success) {
         throw new Error(
@@ -49,11 +73,25 @@ export function ImportSchedulerPanel() {
       }
 
       setScheduler(json.data.scheduler);
+      schedulerRef.current = json.data.scheduler;
+      setPollWarning(null);
+      setError(null);
       return json.data.scheduler;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load scheduler");
-      return null;
+      const message =
+        err instanceof Error ? err.message : "Failed to load scheduler";
+
+      if (options?.fatal || !schedulerRef.current) {
+        setError(message);
+      } else {
+        setPollWarning(
+          "Live refresh temporarily unavailable — showing last known progress.",
+        );
+      }
+
+      return schedulerRef.current;
     } finally {
+      loadInFlightRef.current = false;
       setIsLoading(false);
     }
   }, []);
@@ -73,7 +111,7 @@ export function ImportSchedulerPanel() {
   }, [loadScheduler, stopPolling]);
 
   useEffect(() => {
-    void loadScheduler();
+    void loadScheduler({ fatal: true });
     return () => stopPolling();
   }, [loadScheduler, stopPolling]);
 
@@ -85,6 +123,20 @@ export function ImportSchedulerPanel() {
 
     startPolling();
   }, [scheduler?.runInProgress, startPolling, stopPolling]);
+
+  useEffect(() => {
+    if (!isStarting || !scheduler || scheduler.runInProgress) {
+      return;
+    }
+
+    setIsStarting(false);
+
+    if (scheduler.lastRun.finishedAt) {
+      setRunMessage(
+        `Import finished — imported ${scheduler.lastRun.imported}, updated ${scheduler.lastRun.updated}, skipped ${scheduler.lastRun.skipped}, failed ${scheduler.lastRun.failed} (${formatDuration(scheduler.lastRun.durationSeconds)}).`,
+      );
+    }
+  }, [isStarting, scheduler]);
 
   async function toggleScheduler(enabled: boolean) {
     setIsUpdating(true);
@@ -137,29 +189,7 @@ export function ImportSchedulerPanel() {
           "Import started. Live progress will update below.",
       );
 
-      startPolling();
-      await loadScheduler();
-
-      const waitForCompletion = async () => {
-        const status = await loadScheduler();
-        if (status?.runInProgress) {
-          window.setTimeout(() => {
-            void waitForCompletion();
-          }, 2000);
-          return;
-        }
-
-        stopPolling();
-        setIsStarting(false);
-
-        if (status?.lastRun) {
-          setRunMessage(
-            `Import finished — imported ${status.lastRun.imported}, updated ${status.lastRun.updated}, skipped ${status.lastRun.skipped}, failed ${status.lastRun.failed} (${formatDuration(status.lastRun.durationSeconds)}).`,
-          );
-        }
-      };
-
-      void waitForCompletion();
+      await loadScheduler({ fatal: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Run Now failed");
       setIsStarting(false);
@@ -185,9 +215,12 @@ export function ImportSchedulerPanel() {
         <LoadingSpinner size="md" label="Loading scheduler status…" className="px-6 pb-6" />
       )}
 
-      {error && !isLoading && (
+      {error && !isLoading && !scheduler && (
         <div className="px-6 pb-6">
-          <ErrorMessage message={error} onRetry={() => void loadScheduler()} />
+          <ErrorMessage
+            message={error}
+            onRetry={() => void loadScheduler({ fatal: true })}
+          />
         </div>
       )}
 
@@ -236,6 +269,12 @@ export function ImportSchedulerPanel() {
               <p className="mt-1 text-sm text-sky-100/80">
                 {progress.currentManufacturer ?? "Starting…"}
               </p>
+              {progress.stage && (
+                <p className="mt-1 text-xs text-sky-100/60">
+                  Stage: {formatStageLabel(progress.stage)}
+                  {progress.detail ? ` — ${progress.detail}` : ""}
+                </p>
+              )}
               <div className="mt-3 grid gap-3 sm:grid-cols-4">
                 <ProgressStat label="Imported" value={progress.imported} />
                 <ProgressStat label="Updated" value={progress.updated} />
@@ -260,6 +299,12 @@ export function ImportSchedulerPanel() {
                 <ProgressStat label="Failed" value={scheduler.lastRun.failed} />
               </div>
             </div>
+          )}
+
+          {pollWarning && (
+            <p className="rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 text-sm text-amber-200/90">
+              {pollWarning}
+            </p>
           )}
 
           {runMessage && (
@@ -302,7 +347,11 @@ export function ImportSchedulerPanel() {
               View Import History
             </Link>
 
-            <Button variant="ghost" size="sm" onClick={() => void loadScheduler()}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void loadScheduler({ fatal: true })}
+            >
               Refresh
             </Button>
           </div>

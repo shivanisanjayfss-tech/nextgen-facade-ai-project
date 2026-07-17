@@ -22,6 +22,8 @@ export interface ImportSchedulerSettingsRow {
   progress_updated: number;
   progress_skipped: number;
   progress_failed: number;
+  progress_stage: string | null;
+  progress_detail: string | null;
   last_run_started_at: string | null;
   last_run_finished_at: string | null;
   last_run_duration_seconds: number | null;
@@ -93,6 +95,9 @@ export interface ImportSchedulerProgress {
   updated: number;
   skipped: number;
   failed: number;
+  stage: string | null;
+  detail: string | null;
+  crawledPages: number | null;
 }
 
 /** Public scheduler status returned by GET /api/import/scheduler. */
