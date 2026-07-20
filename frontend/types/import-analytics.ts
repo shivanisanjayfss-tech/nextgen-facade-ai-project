@@ -19,8 +19,8 @@ export interface ImportHistoryFilters {
 /** Aggregated metrics over a filtered import history set. */
 export interface ImportHistoryAnalytics {
   filteredCount: number;
-  /** Percentage 0–100; excludes running rows from denominator. */
-  successRate: number;
+  /** Percentage 0–100; null when not meaningful for the active filter. */
+  successRate: number | null;
   totals: {
     imported: number;
     updated: number;

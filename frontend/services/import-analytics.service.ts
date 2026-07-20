@@ -1,3 +1,8 @@
+import {
+  computeHistoryAnalytics,
+  computeSuccessRate,
+  isSuccessRateApplicable,
+} from "@/lib/import-history-analytics";
 import { applyImportHistoryFilters } from "@/lib/import-history-filters";
 import { getSupabaseServer, isSupabaseConfigured } from "@/lib/supabase";
 import { getImportHistoryById, listImportHistory } from "@/services/import-history.service";
@@ -14,90 +19,19 @@ import type {
   ImportBatchSummary,
   ImportHistoryAnalytics,
   ImportHistoryFilters,
-  SlowestManufacturerEntry,
 } from "@/types/import-analytics";
-import type { ImportHistoryRow, ImportHistoryStatus } from "@/types/import-history";
+import type { ImportHistoryRow } from "@/types/import-history";
 import { DB_TABLES } from "@/types/database";
 
 const ANALYTICS_ROW_CAP = 500;
-const SLOWEST_MANUFACTURER_LIMIT = 5;
 
-function emptyByStatus(): Record<ImportHistoryStatus, number> {
-  return {
-    running: 0,
-    succeeded: 0,
-    failed: 0,
-    partial: 0,
-  };
-}
-
-function computeAnalytics(rows: ImportHistoryRow[]): ImportHistoryAnalytics {
-  const byStatus = emptyByStatus();
-  const totals = {
-    imported: 0,
-    updated: 0,
-    skipped: 0,
-    failed: 0,
-    ignored: 0,
-  };
-
-  let failedRunCount = 0;
-  let durationSum = 0;
-  let durationCount = 0;
-
-  for (const row of rows) {
-    byStatus[row.status] += 1;
-    totals.imported += row.imported;
-    totals.updated += row.updated;
-    totals.skipped += row.skipped;
-    totals.failed += row.failed;
-    totals.ignored += row.ignored;
-
-    if (row.status === "failed") failedRunCount += 1;
-
-    if (typeof row.duration_seconds === "number" && row.duration_seconds >= 0) {
-      durationSum += row.duration_seconds;
-      durationCount += 1;
-    }
-  }
-
-  const terminalCount =
-    byStatus.succeeded + byStatus.partial + byStatus.failed;
-  const successRate =
-    terminalCount > 0
-      ? Math.round((byStatus.succeeded / terminalCount) * 1000) / 10
-      : 0;
-
-  const slowestManufacturers: SlowestManufacturerEntry[] = rows
-    .filter(
-      (row) =>
-        typeof row.duration_seconds === "number" &&
-        row.duration_seconds > 0 &&
-        row.status !== "running",
-    )
-    .sort((a, b) => (b.duration_seconds ?? 0) - (a.duration_seconds ?? 0))
-    .slice(0, SLOWEST_MANUFACTURER_LIMIT)
-    .map((row) => ({
-      importHistoryId: row.id,
-      manufacturer: row.manufacturer,
-      durationSeconds: row.duration_seconds ?? 0,
-      status: row.status,
-      startedAt: row.started_at,
-    }));
-
-  return {
-    filteredCount: rows.length,
-    successRate,
-    totals,
-    failedRunCount,
-    averageDurationSeconds:
-      durationCount > 0
-        ? Math.round((durationSum / durationCount) * 100) / 100
-        : null,
-    slowestManufacturers,
-    byStatus,
-  };
-}
+export {
+  computeBatchAnalytics,
+  computeDashboardAnalytics,
+  computeHistoryAnalytics,
+  computeSuccessRate,
+  isSuccessRateApplicable,
+} from "@/lib/import-history-analytics";
 
 async function loadFilteredHistoryRows(
   filters?: ImportHistoryFilters,
@@ -112,7 +46,10 @@ export async function getImportHistoryAnalytics(
   filters?: ImportHistoryFilters,
 ): Promise<ImportHistoryAnalytics> {
   const rows = await loadFilteredHistoryRows(filters);
-  return computeAnalytics(rows);
+  return computeHistoryAnalytics(rows, {
+    status: filters?.status ?? "all",
+    preset: filters?.preset,
+  });
 }
 
 /** Lists scheduler batch runs with manufacturer run counts. */

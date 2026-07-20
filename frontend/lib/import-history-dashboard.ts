@@ -33,20 +33,6 @@ export function buildHistoryQueryParams(
   return params.toString();
 }
 
-export function buildAnalyticsQueryParams(filter: ImportHistoryUiFilter): string {
-  const params = new URLSearchParams();
-
-  if (filter.status !== "all") {
-    params.set("status", filter.status);
-  }
-
-  if (filter.preset) {
-    params.set("preset", filter.preset);
-  }
-
-  return params.toString();
-}
-
 /** Client-side filter for latest-per-manufacturer view (API ignores filters on view=latest). */
 export function applyClientHistoryFilter(
   rows: ImportHistoryRow[],

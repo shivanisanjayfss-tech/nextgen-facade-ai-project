@@ -181,7 +181,7 @@ export async function extractDatasheetIntelligenceWithAi(
     );
   }
 
-  const { ApiError } = await import("@google/genai/node");
+  const { ApiError } = await import("@google/genai");
   const model = getGeminiModel();
 
   const prompt = `You are a facade materials technical analyst. Extract structured specifications from the datasheet text below.

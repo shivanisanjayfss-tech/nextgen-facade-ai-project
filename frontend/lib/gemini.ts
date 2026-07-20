@@ -1,7 +1,7 @@
 import { ServiceError } from "@/lib/errors";
 import { env, isGeminiConfigured } from "@/lib/env";
 
-type GenaiModule = typeof import("@google/genai/node");
+type GenaiModule = typeof import("@google/genai");
 
 let geminiClient: InstanceType<GenaiModule["GoogleGenAI"]> | null = null;
 let genaiModulePromise: Promise<GenaiModule> | null = null;
@@ -14,7 +14,7 @@ function getGeminiModel(): string {
 
 async function loadGenaiModule(): Promise<GenaiModule> {
   if (!genaiModulePromise) {
-    genaiModulePromise = import("@google/genai/node");
+    genaiModulePromise = import("@google/genai");
   }
 
   return genaiModulePromise;

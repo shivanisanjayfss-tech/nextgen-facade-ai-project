@@ -51,7 +51,9 @@ export function ImportHistorySummaryCards({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <SummaryCard
           label="Success Rate"
-          value={`${analytics.successRate}%`}
+          value={
+            analytics.successRate === null ? "N/A" : `${analytics.successRate}%`
+          }
           hint={`${analytics.filteredCount} run(s) in view`}
         />
         <SummaryCard

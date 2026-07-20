@@ -8,6 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "db:apply-manufacturer-registry": "node scripts/apply-manufacturer-registry.mjs",
     "db:apply-import-scheduler": "node scripts/apply-import-scheduler.mjs",
     "db:apply-import-diagnostics": "node scripts/apply-import-diagnostics.mjs",
@@ -33,6 +35,7 @@
     "eslint-config-next": "16.2.10",
     "pg": "^8.22.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

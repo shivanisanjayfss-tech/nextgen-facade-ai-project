@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
+import { memo } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { cn } from "@/lib/utils";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { ErrorMessage } from "@/components/ui/ErrorMessage";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -29,6 +30,20 @@ function formatDuration(seconds: number | null): string {
 function formatStageLabel(stage: string): string {
   return stage.replace(/_/g, " ");
 }
+
+/** Stable anchor — not recreated when scheduler poll updates replace sibling DOM. */
+const ViewImportHistoryLink = memo(function ViewImportHistoryLink() {
+  return (
+    <a
+      href="/admin/import-history"
+      className={cn(
+        "relative z-20 inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-transparent px-4 py-2 text-sm font-medium text-white backdrop-blur-sm transition-all hover:border-white/20 hover:bg-white/5",
+      )}
+    >
+      View Import History
+    </a>
+  );
+});
 
 export function ImportSchedulerPanel() {
   const [scheduler, setScheduler] = useState<ImportSchedulerStatus | null>(null);
@@ -313,7 +328,7 @@ export function ImportSchedulerPanel() {
             </p>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="relative z-20 flex flex-wrap items-center gap-3">
             <Button
               variant="primary"
               onClick={() => void runNow()}
@@ -340,12 +355,7 @@ export function ImportSchedulerPanel() {
               </Button>
             )}
 
-            <Link
-              href="/admin/import-history"
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-transparent px-4 py-2 text-sm font-medium text-white transition-all hover:border-white/20 hover:bg-white/5"
-            >
-              View Import History
-            </Link>
+            <ViewImportHistoryLink />
 
             <Button
               variant="ghost"

@@ -22,8 +22,9 @@ export function ImportBatchRunsTable({
   emptyMessage = "No batch runs recorded yet.",
 }: ImportBatchRunsTableProps) {
   const router = useRouter();
+  const rows = Array.isArray(batches) ? batches : [];
 
-  if (batches.length === 0) {
+  if (rows.length === 0) {
     return <p className="px-6 pb-6 text-sm text-white/50">{emptyMessage}</p>;
   }
 
@@ -45,19 +46,31 @@ export function ImportBatchRunsTable({
           </tr>
         </thead>
         <tbody>
-          {batches.map((batch) => {
-            const href = `/admin/import-history/batches/${batch.id}`;
+          {rows.map((batch) => {
+            const rowKey = batch.id || `${batch.started_at}-${batch.trigger}`;
+            const href = `/admin/import-history/batches/${encodeURIComponent(batch.id)}`;
 
             return (
               <tr
-                key={batch.id}
+                key={rowKey}
+                role="link"
+                tabIndex={0}
                 className="cursor-pointer border-b border-white/5 text-white/70 transition-colors hover:bg-white/[0.04]"
-                onClick={() => router.push(href)}
+                onClick={(event) => {
+                  // Inner <Link> handles its own navigation; don't double-push.
+                  if ((event.target as HTMLElement).closest("a")) return;
+                  router.push(href);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    router.push(href);
+                  }
+                }}
               >
                 <td className="px-6 py-4">
                   <Link
                     href={href}
-                    onClick={(event) => event.stopPropagation()}
                     className="font-mono text-xs text-sky-300 hover:text-sky-200 hover:underline"
                     title={batch.id}
                   >
